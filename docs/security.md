@@ -59,7 +59,9 @@ The new password is read from a hidden prompt (or one line on stdin with `--pass
 
 A fresh database also prints a first `sk-geek-*` key to the server log on its first start; it keeps working for inference until you revoke it.
 
-GeekCubo stores only a one-way hash, so an existing key can never be shown or copied again. If you lose one, **Rotate** it: the replacement has the same restrictions and the old key keeps working until you revoke it. **Revoke** takes effect immediately.
+GeekCubo stores only a one-way hash, so an existing key can never be shown or copied again. The copy icon next to an existing key's masked prefix copies only that identifier (for example `sk-geek-....3d1f`), which is useful for matching a key to a client but cannot authenticate. If you lose a key, **Rotate** it: the replacement is shown once with a **Copy API key** button, it has the same restrictions, and the old key keeps working until you revoke it. Applications that used the old key must be updated. **Revoke** takes effect immediately.
+
+The list shows **Active** keys by default; **Revoked & expired** and **All** show the rest. A revoked or expired key can be **Archived**: it disappears from key management, but the record (hash and revocation time) stays in the database, so request history in Analytics remains intact. Active keys cannot be archived — revoke them first.
 
 ## Which key goes where
 

@@ -1,0 +1,57 @@
+name: Bug report
+description: Something in GeekCubo does not work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. **Security vulnerabilities must not be reported here**: use the private process in [SECURITY.md](https://github.com/GeekCubo/GeekCubo-AI-Router/blob/main/SECURITY.md).
+
+        Never paste API keys, provider keys, passwords, session cookies or `.env` contents. Redact them.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to …
+        2. Click …
+        3. See error …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: GeekCubo version
+      description: Output of `geekcubo --version`, the image tag, or the commit SHA.
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How do you run GeekCubo?
+      options:
+        - Docker Compose (install.sh)
+        - Docker image from GHCR
+        - pip / wheel
+        - From source
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, browser (for dashboard issues), database (SQLite/Postgres), reverse proxy.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: For example `docker compose logs --tail=100 api`. Redact secrets.
+      render: text

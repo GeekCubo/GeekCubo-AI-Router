@@ -276,3 +276,35 @@ async def revoke_key(
     row.revoked_at = datetime.now(timezone.utc)
     await db.commit()
     return Response(status_code=204)
+
+
+@router.post("/{key_id}/archive", status_code=204)
+async def archive_key(
+    key_id: str,
+    _record: SessionRecord = Depends(get_admin_session),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Hide a revoked or expired key from key management.
+
+    A soft delete (`is_deleted = 1`): the row, its hash and its revocation
+    timestamp stay in the database, so request-log rows that reference the key
+    keep their audit trail. The key validator already ignores soft-deleted rows,
+    and the key was unusable before this call anyway. Active keys are refused:
+    archiving must never be a silent way to revoke a credential.
+    """
+    row = await _get_key(db, key_id, DEFAULT_WORKSPACE_ID)
+    expired = False
+    if row.expires_at is not None:
+        expires_at = row.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        expired = expires_at <= datetime.now(timezone.utc)
+    revoked = (not row.is_active) or row.revoked_at is not None
+    if not (revoked or expired):
+        raise HTTPException(
+            status_code=409,
+            detail="Only revoked or expired keys can be archived. Revoke the key first.",
+        )
+    row.is_deleted = 1
+    await db.commit()
+    return Response(status_code=204)

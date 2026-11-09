@@ -61,8 +61,9 @@
       <div class="auth-brand">
         <img class="brand-logo-img auth-logo-light" src="/static/brand/geekcubo-logo.svg" alt="GeekCubo" width="188" height="50">
         <img class="brand-logo-img auth-logo-dark" src="/static/brand/geekcubo-logo-dark.svg" alt="GeekCubo" width="188" height="50">
+        <!-- Beside the brand on wide screens; hidden on phones to save height. -->
+        <p class="auth-tagline" data-i18n="auth.tagline">One Gateway. Every AI Model.</p>
       </div>
-      <p class="auth-tagline" data-i18n="auth.tagline">One Gateway. Every AI Model.</p>
 
       <div id="checking-view" class="auth-view" hidden>
         <h1 class="auth-title" data-i18n="auth.loading">Loading…</h1>
@@ -98,10 +99,11 @@
             </div>
           </label>
           <label class="checkline auth-remember" for="login-remember">
-            <input type="checkbox" id="login-remember" name="remember">
+            <input type="checkbox" id="login-remember" name="remember" aria-describedby="login-remember-hint">
             <span data-i18n="auth.remember">Remember me for 14 days</span>
           </label>
-          <p class="field-help muted auth-remember-hint" data-i18n="auth.remember_hint">Stay signed in on this browser for up to 14 days, even after closing it. Use only on a device you trust.</p>
+          <!-- Kept for screen readers only; the visible form shows just the label. -->
+          <p class="sr-only" id="login-remember-hint" data-i18n="auth.remember_hint">Stay signed in on this browser for up to 14 days, even after closing it. Use only on a device you trust.</p>
           <button type="submit" class="btn btn-primary btn-full" id="login-submit">
             <span data-i18n="auth.sign_in">Sign In</span>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
@@ -621,8 +623,8 @@
                 <div class="empty-illustration">
                   <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="6" y1="10" x2="6" y2="14"/><line x1="10" y1="10" x2="10" y2="14"/></svg>
                 </div>
-                <h3 data-i18n="ui.no_provider_keys_yet">No provider keys yet</h3>
-                <p data-i18n="ui.add_at_least_one_to_start_routing_real_t">Add at least one to start routing real traffic. Pick a provider above or click a quick-add chip.</p>
+                <h3 data-i18n="prov.empty_std_title">No standard-provider keys configured</h3>
+                <p data-i18n="prov.empty_std_body">This list covers built-in providers such as OpenAI, Anthropic and Google. Custom OpenAI-compatible providers keep their own credentials and are listed under Custom Providers.</p>
               </div>
             </div>
           </article>
@@ -1176,138 +1178,214 @@
           </article>
         </section>
         <section id="panel-analytics" class="panel">
-          <article class="card" id="routing-analytics-card">
-            <header class="card-head">
-              <div>
-                <h2 class="card-title" data-i18n="ui.routing">Routing</h2>
-                <p class="card-sub" id="ra-summary">Counts from your request log. Nothing estimated.</p>
-              </div>
-            </header>
-            <div class="ra-kpis" id="ra-kpis"></div>
-            <!-- Grouped into three bounded panels. Seven flat sections with no
-                 edges read as one undifferentiated list. -->
-            <div class="ra-groups">
-              <section class="ra-group ra-group-wide" aria-labelledby="ra-g-volume">
-                <h3 class="ra-group-title" id="ra-g-volume" data-i18n="ui.volume">Volume</h3>
-                <p class="ra-group-sub">Requests per day. The darker part of each bar is <code>model="auto"</code> traffic.</p>
-                <div class="ra-timeline" id="ra-timeline" role="img" aria-label="Requests per day"></div>
-                <p class="ra-note" id="ra-timeline-note" hidden></p>
-              </section>
+          <!-- One sidebar destination, four in-page tabs. Panes stay in the DOM
+               (hidden attribute); the selected tab and reporting range are kept
+               in the URL (?atab=…&days=…) so a refresh lands in the same place. -->
+          <div class="an-toolbar">
+            <div class="q-tabs an-tabs" role="tablist" aria-label="Analytics sections" data-i18n-aria="an.tabs_label" id="analytics-tabs">
+              <button type="button" class="q-tab" role="tab" id="an-tab-overview" data-an-tab="overview"
+                      aria-controls="an-pane-overview" aria-selected="true" tabindex="0">
+                <span data-i18n="an.tab_overview">Overview</span>
+              </button>
+              <button type="button" class="q-tab" role="tab" id="an-tab-routing" data-an-tab="routing"
+                      aria-controls="an-pane-routing" aria-selected="false" tabindex="-1">
+                <span data-i18n="an.tab_routing">Routing</span>
+              </button>
+              <button type="button" class="q-tab" role="tab" id="an-tab-costs" data-an-tab="costs"
+                      aria-controls="an-pane-costs" aria-selected="false" tabindex="-1">
+                <span data-i18n="an.tab_costs">Costs &amp; Performance</span>
+              </button>
+              <button type="button" class="q-tab" role="tab" id="an-tab-history" data-an-tab="history"
+                      aria-controls="an-pane-history" aria-selected="false" tabindex="-1">
+                <span data-i18n="an.tab_history">Request History</span>
+              </button>
+            </div>
+            <div class="seg an-range" id="window-seg" role="group" aria-label="Reporting range" data-i18n-aria="an.range_label">
+              <button class="seg-btn" data-days="1">24h</button>
+              <button class="seg-btn active" data-days="7">7d</button>
+              <button class="seg-btn" data-days="30">30d</button>
+            </div>
+          </div>
 
-              <section class="ra-group" aria-labelledby="ra-g-decisions">
-                <h3 class="ra-group-title" id="ra-g-decisions" data-i18n="ui.routing_decisions">Routing decisions</h3>
-                <p class="ra-group-sub" data-i18n="ui.how_auto_requests_were_classified_and_wh">How Auto requests were classified and where they went.</p>
-                <div class="ra-sub">
-                  <h4 class="ra-sub-title" data-i18n="ui.by_tier">By tier</h4>
-                  <ul class="ra-bars" id="ra-tiers"></ul>
+          <!-- ── Overview ── -->
+          <div class="an-pane" role="tabpanel" id="an-pane-overview" aria-labelledby="an-tab-overview">
+            <article class="card" id="routing-analytics-card">
+              <header class="card-head">
+                <div>
+                  <h2 class="card-title" data-i18n="an.tab_overview">Overview</h2>
+                  <p class="card-sub" id="ra-summary">Counts from your request log. Nothing estimated.</p>
                 </div>
-                <div class="ra-sub">
-                  <h4 class="ra-sub-title" data-i18n="ui.by_strategy">By strategy</h4>
-                  <ul class="ra-bars" id="ra-strategies"></ul>
+              </header>
+              <div class="ra-kpis" id="ra-kpis"></div>
+              <div class="ra-groups">
+                <section class="ra-group ra-group-wide" aria-labelledby="ra-g-volume">
+                  <h3 class="ra-group-title" id="ra-g-volume" data-i18n="ui.volume">Volume</h3>
+                  <p class="ra-group-sub">Requests per day. The darker part of each bar is <code>model="auto"</code> traffic.</p>
+                  <div class="ra-timeline" id="ra-timeline" role="img" aria-label="Requests per day"></div>
+                  <p class="ra-note" id="ra-timeline-note" hidden></p>
+                </section>
+                <section class="ra-group ra-group-wide" aria-labelledby="ra-g-top">
+                  <h3 class="ra-group-title" id="ra-g-top" data-i18n="ui.top_models_served">Top models served</h3>
+                  <p class="ra-group-sub">The five most-served models in this window. The full distribution is on the Routing tab.</p>
+                  <ul class="ra-bars" id="an-top-models"></ul>
+                </section>
+              </div>
+            </article>
+          </div>
+
+          <!-- ── Routing ── -->
+          <div class="an-pane" role="tabpanel" id="an-pane-routing" aria-labelledby="an-tab-routing" hidden>
+            <article class="card">
+              <header class="card-head">
+                <div>
+                  <h2 class="card-title" data-i18n="ui.routing">Routing</h2>
+                  <p class="card-sub" id="ra-routing-summary">—</p>
                 </div>
-                <div class="ra-sub">
-                  <h4 class="ra-sub-title" data-i18n="ui.by_routing_id">By routing id</h4>
-                  <ul class="ra-bars" id="ra-requested"></ul>
-                </div>
-                <div class="ra-sub">
-                  <h4 class="ra-sub-title" data-i18n="ui.top_models_served">Top models served</h4>
+              </header>
+              <div class="ra-kpis" id="ra-routing-kpis"></div>
+              <div class="ra-groups">
+                <section class="ra-group" aria-labelledby="ra-g-decisions">
+                  <h3 class="ra-group-title" id="ra-g-decisions" data-i18n="ui.routing_decisions">Routing decisions</h3>
+                  <p class="ra-group-sub" data-i18n="ui.how_auto_requests_were_classified_and_wh">How Auto requests were classified and where they went.</p>
+                  <div class="ra-sub">
+                    <h4 class="ra-sub-title" data-i18n="ui.by_strategy">By strategy</h4>
+                    <ul class="ra-bars" id="ra-strategies"></ul>
+                  </div>
+                  <div class="ra-sub">
+                    <h4 class="ra-sub-title" data-i18n="ui.by_tier">By tier</h4>
+                    <ul class="ra-bars" id="ra-tiers"></ul>
+                  </div>
+                  <div class="ra-sub">
+                    <h4 class="ra-sub-title" data-i18n="ui.by_routing_id">By routing id</h4>
+                    <ul class="ra-bars" id="ra-requested"></ul>
+                  </div>
+                </section>
+
+                <section class="ra-group" aria-labelledby="ra-g-models">
+                  <h3 class="ra-group-title" id="ra-g-models">Model distribution</h3>
+                  <p class="ra-group-sub">Which model actually served each request (all requests, not only Auto).</p>
                   <ul class="ra-bars" id="ra-models"></ul>
+                </section>
+
+                <section class="ra-group ra-group-wide" aria-labelledby="ra-g-reliability">
+                  <h3 class="ra-group-title" id="ra-g-reliability">Routing reliability</h3>
+                  <p class="ra-group-sub">
+                    <strong>Recorded history</strong> for the selected window — not current
+                    provider health. A provider that failed last week may be fine now.
+                  </p>
+                  <div class="ra-reliability">
+                    <div class="ra-sub">
+                      <h4 class="ra-sub-title">Upstream attempt outcomes</h4>
+                      <div id="ra-fallback" class="ra-fallback"></div>
+                      <p class="ra-note ra-population-note" id="ra-fallback-note"></p>
+                    </div>
+                    <div class="ra-sub">
+                      <h4 class="ra-sub-title" data-i18n="ui.errors_by_cause">Errors by cause</h4>
+                      <ul class="ra-bars" id="ra-errors"></ul>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </article>
+          </div>
+
+          <!-- ── Costs & Performance ── -->
+          <div class="an-pane" role="tabpanel" id="an-pane-costs" aria-labelledby="an-tab-costs" hidden>
+            <article class="card">
+              <header class="card-head">
+                <div>
+                  <h2 class="card-title" data-i18n="an.spend">Spend by model</h2>
+                  <p class="card-sub" id="spend-summary">—</p>
                 </div>
-              </section>
+              </header>
+              <div class="ra-kpis" id="an-cost-kpis"></div>
+              <div class="bar-chart" id="bar-chart"></div>
+            </article>
 
-              <section class="ra-group" aria-labelledby="ra-g-reliability">
-                <h3 class="ra-group-title" id="ra-g-reliability" data-i18n="ui.reliability">Reliability</h3>
-                <p class="ra-group-sub">
-                  <strong>Recorded history</strong> for the selected window — not current
-                  provider health. A provider that failed last week may be fine now.
-                </p>
-                <div class="ra-sub">
-                  <h4 class="ra-sub-title">Fallback</h4>
-                  <div id="ra-fallback" class="ra-fallback"></div>
+            <article class="card">
+              <header class="card-head">
+                <div>
+                  <h2 class="card-title">Spend by provider</h2>
+                  <p class="card-sub">The same recorded costs, grouped by the provider that served each request.</p>
                 </div>
-                <div class="ra-sub">
-                  <h4 class="ra-sub-title" data-i18n="ui.errors_by_cause">Errors by cause</h4>
-                  <ul class="ra-bars" id="ra-errors"></ul>
+              </header>
+              <div class="bar-chart" id="provider-spend-chart"></div>
+            </article>
+
+            <article class="card">
+              <header class="card-head">
+                <div>
+                  <h2 class="card-title" data-i18n="an.latency">Latency by provider</h2>
+                  <p class="card-sub" data-i18n="ui.p50_and_p99_sourced_from_local_request_l">p50 and p99 — sourced from local request logs.</p>
                 </div>
-              </section>
-            </div>
-
-            <div class="ra-baseline">
-              <label class="field"><span class="field-label" data-i18n="ui.compare_against_a_baseline_model">Compare against a baseline model</span>
-                <select id="ra-baseline"><option value="" data-i18n="ui.none">None</option></select></label>
-              <button type="button" class="btn btn-secondary btn-sm" id="ra-baseline-go" data-i18n="ui.compare">Compare</button>
-              <div id="ra-baseline-result" class="ra-baseline-result"></div>
-              <details class="policy-help ra-baseline-help">
-                <summary data-i18n="ui.how_the_comparison_is_calculated">How the comparison is calculated</summary>
-                <p>This is an estimate, not an invoice. The backend totals all recorded input and output tokens for successful requests in the window and reprices that whole total at the baseline model's configured rate. It ignores prompt caching, batch pricing, reasoning tokens and negotiated rates — the backend docstring says so explicitly. Good for a directional "would this have been cheaper?" check; not for billing reconciliation.</p>
-              </details>
-            </div>
-          </article>
-
-          <article class="card">
-            <header class="card-head">
-              <div>
-                <h2 class="card-title" data-i18n="an.spend">Spend by model</h2>
-                <p class="card-sub" id="spend-summary">—</p>
+              </header>
+              <div class="table-wrap">
+                <table id="latency-table">
+                  <thead><tr>
+                    <th data-i18n="ui.provider">Provider</th>
+                    <th data-i18n="ui.requests">Requests</th>
+                    <th>p50</th>
+                    <th>p99</th>
+                  </tr></thead>
+                  <tbody></tbody>
+                </table>
               </div>
-              <div class="seg" id="window-seg">
-                <button class="seg-btn" data-days="1">24h</button>
-                <button class="seg-btn active" data-days="7">7d</button>
-                <button class="seg-btn" data-days="30">30d</button>
-              </div>
-            </header>
-            <div class="bar-chart" id="bar-chart"></div>
-          </article>
+            </article>
 
-          <article class="card">
-            <header class="card-head">
-              <div>
-                <h2 class="card-title" data-i18n="an.latency">Latency by provider</h2>
-                <p class="card-sub" data-i18n="ui.p50_and_p99_sourced_from_local_request_l">p50 and p99 — sourced from local request logs.</p>
-              </div>
-            </header>
-            <div class="table-wrap">
-              <table id="latency-table">
-                <thead><tr>
-                  <th data-i18n="ui.provider">Provider</th>
-                  <th data-i18n="ui.requests">Requests</th>
-                  <th>p50</th>
-                  <th>p99</th>
-                </tr></thead>
-                <tbody></tbody>
-              </table>
-            </div>
-          </article>
-
-          <article class="card">
-            <header class="card-head">
-              <div>
-                <h2 class="card-title" data-i18n="an.recent">Recent requests</h2>
-                <p class="card-sub" data-i18n="ui.newest_first_click_a_row_to_copy_its_tra">Newest first. Click a row to copy its trace ID.</p>
-              </div>
-            </header>
-            <div class="table-wrap">
-              <table id="recent-table">
-                <thead><tr>
-                  <th data-i18n="ui.when">When</th>
-                  <th data-i18n="ui.model">Model</th>
-                  <th data-i18n="ui.routing">Routing</th>
-                  <th data-i18n="ui.provider">Provider</th>
-                  <th data-i18n="ui.tokens_in_out">Tokens (in / out)</th>
-                  <th data-i18n="ui.latency">Latency</th>
-                  <th data-i18n="ui.status">Status</th>
-                </tr></thead>
-                <tbody></tbody>
-              </table>
-              <div class="empty-state" id="recent-empty" hidden>
-                <div class="empty-illustration">
-                  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 5-6"/></svg>
+            <article class="card">
+              <header class="card-head">
+                <div>
+                  <h2 class="card-title">Baseline model comparison</h2>
+                  <p class="card-sub">Re-prices this window's recorded tokens at another model's configured rate.</p>
                 </div>
-                <h3 data-i18n="ui.no_traffic_yet">No traffic yet</h3>
-                <p data-i18n="ui.once_you_start_sending_requests_they_ll_">Once you start sending requests, they'll appear here in real time.</p>
+              </header>
+              <div class="ra-baseline">
+                <label class="field"><span class="field-label" data-i18n="ui.compare_against_a_baseline_model">Compare against a baseline model</span>
+                  <select id="ra-baseline"><option value="" data-i18n="ui.none">None</option></select></label>
+                <button type="button" class="btn btn-secondary btn-sm" id="ra-baseline-go" data-i18n="ui.compare">Compare</button>
+                <div id="ra-baseline-result" class="ra-baseline-result"></div>
+                <details class="policy-help ra-baseline-help">
+                  <summary data-i18n="ui.how_the_comparison_is_calculated">How the comparison is calculated</summary>
+                  <p>This is an estimate, not an invoice. The backend totals all recorded input and output tokens for successful requests in the window and reprices that whole total at the baseline model's configured rate. It ignores prompt caching, batch pricing, reasoning tokens and negotiated rates — the backend docstring says so explicitly. Good for a directional "would this have been cheaper?" check; not for billing reconciliation.</p>
+                </details>
               </div>
-            </div>
-          </article>
+            </article>
+          </div>
+
+          <!-- ── Request History ── -->
+          <div class="an-pane" role="tabpanel" id="an-pane-history" aria-labelledby="an-tab-history" hidden>
+            <article class="card">
+              <header class="card-head">
+                <div>
+                  <h2 class="card-title" data-i18n="an.recent">Recent requests</h2>
+                  <p class="card-sub">The 50 newest requests, independent of the reporting range. Click a row to copy its trace ID; hover the routing cell for the routing reason.</p>
+                </div>
+              </header>
+              <p class="an-scroll-hint" aria-hidden="true">Swipe sideways to see every column →</p>
+              <div class="table-wrap an-history-wrap" tabindex="0" aria-label="Recent requests table, scrolls horizontally">
+                <table id="recent-table">
+                  <thead><tr>
+                    <th data-i18n="ui.when">When</th>
+                    <th data-i18n="ui.model">Model</th>
+                    <th data-i18n="ui.routing">Routing</th>
+                    <th data-i18n="ui.provider">Provider</th>
+                    <th data-i18n="ui.tokens_in_out">Tokens (in / out)</th>
+                    <th data-i18n="ui.latency">Latency</th>
+                    <th data-i18n="ui.status">Status</th>
+                    <th>Trace / diagnostics</th>
+                  </tr></thead>
+                  <tbody></tbody>
+                </table>
+                <div class="empty-state" id="recent-empty" hidden>
+                  <div class="empty-illustration">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 5-6"/></svg>
+                  </div>
+                  <h3 data-i18n="ui.no_traffic_yet">No traffic yet</h3>
+                  <p data-i18n="ui.once_you_start_sending_requests_they_ll_">Once you start sending requests, they'll appear here in real time.</p>
+                </div>
+              </div>
+            </article>
+          </div>
         </section>
 
         <!-- ─────────────── Keys ─────────────── -->
@@ -1365,9 +1443,15 @@
                 <strong data-i18n="keys.reveal_title">Copy this key now — it cannot be retrieved later.</strong>
               </div>
               <p class="card-sub" id="new-key-caption"></p>
-              <pre class="code-pre"><code id="new-key-value"></code></pre>
+              <p class="card-sub key-rotate-warning" id="new-key-rotate-note" data-i18n="keys.rotate_update_apps" hidden>Applications that use the previous key must be updated to this new key.</p>
+              <div class="key-secret-row">
+                <pre class="code-pre key-secret"><code id="new-key-value"></code></pre>
+                <button type="button" class="btn btn-primary key-secret-copy" id="new-key-copy">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  <span data-i18n="keys.copy_key">Copy API key</span>
+                </button>
+              </div>
               <div class="key-reveal-actions">
-                <button type="button" class="btn btn-primary btn-sm" id="new-key-copy" data-i18n="keys.copy_key">Copy API key</button>
                 <button type="button" class="btn btn-ghost btn-sm" id="new-key-download" data-i18n="keys.download">Download credentials</button>
                 <button type="button" class="btn btn-ghost btn-sm" id="new-key-dismiss" data-i18n="keys.dismiss">I saved it — hide key</button>
               </div>
@@ -1389,19 +1473,26 @@
               </p>
             </div>
 
+            <div class="keys-toolbar">
+              <div class="seg" id="keys-filter" role="group" aria-label="Show keys" data-i18n-aria="keys.filter_label">
+                <button type="button" class="seg-btn active" data-key-filter="active" aria-pressed="true"><span data-i18n="keys.filter_active">Active</span> <span class="seg-count" id="keys-count-active"></span></button>
+                <button type="button" class="seg-btn" data-key-filter="revoked" aria-pressed="false"><span data-i18n="keys.filter_revoked">Revoked &amp; expired</span> <span class="seg-count" id="keys-count-revoked"></span></button>
+                <button type="button" class="seg-btn" data-key-filter="all" aria-pressed="false"><span data-i18n="keys.filter_all">All</span> <span class="seg-count" id="keys-count-all"></span></button>
+              </div>
+            </div>
             <div class="table-wrap">
               <table id="keys-table" class="keys-table">
                 <!-- Proportional widths: the name and the action trio need room,
                      the timestamps do not. Fixed percentages previously made
                      Revoke wrap under Rotate on ordinary laptop widths. -->
                 <colgroup>
-                  <col style="width:18%">
                   <col style="width:16%">
+                  <col style="width:19%">
                   <col style="width:11%">
                   <col style="width:11%">
                   <col style="width:11%">
                   <col style="width:9%">
-                  <col style="width:24%">
+                  <col style="width:23%">
                 </colgroup>
                 <thead><tr>
                   <th data-i18n="ui.name">Name</th>
@@ -1415,6 +1506,8 @@
                 <tbody></tbody>
               </table>
               <p class="card-sub small muted keys-list-note" data-i18n="keys.list_note">Existing keys show only a masked prefix. GeekCubo keeps a one-way hash, so a full key cannot be copied again after it was created — rotate a key to get a new secret.</p>
+              <p class="card-sub small muted keys-archive-note" id="keys-archive-note" data-i18n="keys.archive_note" hidden>Archiving hides a revoked or expired key from this list. It can never authenticate again, and its usage history stays in Analytics.</p>
+              <p class="card-sub small muted keys-filter-empty" id="keys-filter-empty" hidden></p>
               <div class="empty-state" id="keys-empty" hidden>
                 <div class="empty-illustration">
                   <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="14" r="4"/><path d="M11 11l9-9M16 6l3 3M14 8l3 3"/></svg>

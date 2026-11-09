@@ -14,6 +14,8 @@ A self-hosted, OpenAI-compatible AI gateway and LLM router. Bring your own provi
 
 [English](./README.md) | [日本語](./README.ja.md) | [中文](./README.zh.md) | [한국어](./README.ko.md) | [Deutsch](./README.de.md) | [Français](./README.fr.md) | [Español](./README.es.md) | [Italiano](./README.it.md) | [Русский](./README.ru.md) | [Português](./README.pt.md) | [Tiếng Việt](./README.vi.md) | [हिन्दी](./README.hi.md)
 
+<sub>Translations are community-maintained and may lag behind this English README, which is the reference version.</sub>
+
 <p align="center">
   <img src="docs/images/geekcubo-main.webp" alt="GeekCubo tour: overview, provider keys, routing strategies and pools, chat, analytics and Connect a tool" width="640"><br>
   <sub><i>Illustrative interface. Models, providers and availability depend on your configuration.</i></sub>
@@ -358,6 +360,7 @@ Update with `git pull`, then `docker compose build api && docker compose up -d a
 | [Local AI Connect](docs/local-ai-connect.md) · [Chat](docs/chat.md) | Local models; dashboard chat, web search, attachments |
 | [API endpoints](docs/api.md) · [Architecture](docs/architecture.md) | Endpoints, catalog, cache; source layout, tests, roadmap |
 | [Deployment](DEPLOYMENT.md) | VPS, reverse proxy, backup, upgrades |
+| [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md) · [Code of Conduct](CODE_OF_CONDUCT.md) | Fork-and-PR workflow, tests, review; private vulnerability reports |
 
 ## Support GeekCubo
 

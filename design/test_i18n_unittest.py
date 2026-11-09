@@ -30,7 +30,7 @@ SAME_AS_ENGLISH_OK = {
     "en": set(),
     "es": {"auth.password", "ui.endpoint", "ui.manual", "sec.session_normal", "keys.endpoint_local"},
     "pt": {"auth.password", "ui.status", "ui.pools", "ui.endpoint", "ui.volume", "ui.manual", "keys.endpoint_local"},
-    "de": {"tab.routing.title", "ui.system", "ui.status", "ui.pools", "ui.format",
+    "de": {"tab.routing.title", "an.tab_routing", "ui.system", "ui.status", "ui.pools", "ui.format",
            "ui.name", "ui.routing", "ui.administrator", "ui.optional"},
     "fr": {"auth.password", "sec.sessions", "ui.pools", "ui.messages", "ui.mode",
            "ui.messages_2", "ui.format", "ui.volume", "ui.actions", "sec.active"},

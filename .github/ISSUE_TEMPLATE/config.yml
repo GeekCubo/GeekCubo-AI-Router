@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability (private)
+    url: https://github.com/GeekCubo/GeekCubo-AI-Router/security/advisories/new
+    about: Please report vulnerabilities privately, never in a public issue.

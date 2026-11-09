@@ -318,7 +318,25 @@ async def spend_by_model(
         for model, cost, count in rows
     ]
     total = sum(row["cost_microcents"] for row in by_model)
-    return {"total_microcents": total, "by_model": by_model, "days": days}
+
+    # The same recorded costs, grouped by the provider column of each row.
+    provider_rows = (
+        await db.execute(
+            select(
+                RequestLog.provider,
+                func.sum(RequestLog.cost_microcents).label("cost"),
+                func.count().label("count"),
+            )
+            .where(RequestLog.is_deleted == 0, RequestLog.created_at >= cutoff)
+            .group_by(RequestLog.provider)
+            .order_by(desc("cost"))
+        )
+    ).all()
+    by_provider = [
+        {"provider": provider, "cost_microcents": int(cost or 0), "request_count": count}
+        for provider, cost, count in provider_rows
+    ]
+    return {"total_microcents": total, "by_model": by_model, "by_provider": by_provider, "days": days}
 
 
 @router.get("/latency")

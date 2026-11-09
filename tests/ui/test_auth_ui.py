@@ -461,6 +461,14 @@ def test_revoke_key_stops_it_immediately(page, live_server):
     row = page.locator("#keys-table tbody tr", has_text="revoke-me")
     page.once("dialog", lambda d: d.accept())  # the destructive confirm()
     row.locator(".rev-key").click()
+    # The default view lists active keys only; revoked keys move to the
+    # "Revoked & expired" view.
+    page.wait_for_function(
+        "() => ![...document.querySelectorAll('#keys-table tbody tr')]"
+        ".some(r => r.innerText.includes('revoke-me'))",
+        timeout=15_000,
+    )
+    page.click('[data-key-filter="revoked"]')
     page.wait_for_function(
         "() => [...document.querySelectorAll('#keys-table tbody tr')]"
         ".some(r => r.innerText.includes('revoke-me') && r.innerText.toUpperCase().includes('REVOKED'))",
@@ -632,7 +640,13 @@ def test_existing_keys_explain_non_recoverability_and_offer_no_copy(page, live_s
     page.click('#tabs [data-tab="keys"]')
     row = page.locator("#keys-table tbody tr", has_text="listed-key").first
     row.wait_for(timeout=15_000)
+    # No control offers the full key. The only copy control copies the masked
+    # identifier and says so in its accessible name.
     assert row.locator("button", has_text="Copy").count() == 0
+    copy_controls = row.locator(".copy-prefix")
+    assert copy_controls.count() == 1
+    label = copy_controls.first.get_attribute("aria-label").lower()
+    assert "identifier" in label and "not the api key" in label
     assert row.locator(".rotate-key").count() == 1 and row.locator(".rev-key").count() == 1
     assert "cannot be copied again" in page.inner_text(".keys-list-note")
 

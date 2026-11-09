@@ -400,6 +400,22 @@ cost provenance live in the database. A backup that omits `/data` loses them;
 the implementation does not silently re-derive confirmed rates from a public
 catalog.
 
+### Post-update smoke test without leftover keys
+
+A release check needs an `sk-geek-*` key to call the API. Create a temporary
+one and clean it up when the check has passed, so smoke tests do not leave
+clutter in **Settings → API Keys**:
+
+1. **Settings → API Keys** → name it `release-check <date>`, expiry **7 days**
+   (so a forgotten key stops working on its own) → **Generate**.
+2. Run the check, for example `curl -fsS -H "Authorization: Bearer $KEY" https://<your-host>/v1/models`.
+   Prefer `/v1/models` or a free/local model; avoid paid completions unless
+   the release changed the request path.
+3. **Revoke** the key and confirm the same request now returns `401`.
+4. Switch the list to **Revoked & expired** and **Archive** the key. The
+   record stays in the database for request-log history; it is only hidden.
+5. `unset KEY` and clear it from your shell history if you pasted it.
+
 ### Rollback
 
 ```bash
