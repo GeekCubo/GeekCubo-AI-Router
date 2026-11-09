@@ -152,14 +152,18 @@ def test_wordmark_is_outlined_not_live_text():
 
 
 def test_og_image_is_correct_size():
-    """og-image.png must be exactly 1200x630 (Open Graph standard)."""
-    import subprocess
-    result = subprocess.run(
-        ["identify", "-format", "%wx%h", str(ROOT / "design" / "brand" / "og-image.png")],
-        capture_output=True, text=True,
-    )
-    assert result.returncode == 0, "ImageMagick identify failed"
-    assert result.stdout.strip() == "1200x630", f"og-image.png is {result.stdout.strip()}, expected 1200x630"
+    """og-image.png must be exactly 1200x630 (Open Graph standard).
+
+    Reads the PNG header directly (stdlib only) so the check does not depend
+    on ImageMagick being installed on the CI runner.
+    """
+    import struct
+    data = (ROOT / "design" / "brand" / "og-image.png").read_bytes()
+    assert data[:8] == b"\x89PNG\r\n\x1a\n", "og-image.png is not a PNG file"
+    # The first chunk of every PNG is IHDR: length(4) type(4) width(4) height(4).
+    assert data[12:16] == b"IHDR", "og-image.png has no IHDR chunk"
+    width, height = struct.unpack(">II", data[16:24])
+    assert (width, height) == (1200, 630), f"og-image.png is {width}x{height}, expected 1200x630"
 
 
 def test_html_head_has_og_and_favicon_meta():

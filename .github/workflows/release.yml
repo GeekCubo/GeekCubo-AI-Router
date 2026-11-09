@@ -176,7 +176,12 @@ jobs:
 
       # Attests what the release tags resolve to, so
       # `gh attestation verify oci://…:latest` verifies the image people pull.
+      # GitHub only offers artifact attestations for private repositories on
+      # Enterprise Cloud, so while this repository is private the step is
+      # skipped (the image itself is already built, smoked and promoted).
+      # It runs automatically once the repository is public.
       - name: attest build provenance
+        if: ${{ !github.event.repository.private }}
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ steps.cfg.outputs.image }}
@@ -194,6 +199,11 @@ jobs:
             echo
             echo "digest: \`${{ steps.promote.outputs.digest }}\`"
             echo "platforms: \`${{ steps.cfg.outputs.platforms }}\` (each one booted)"
+            if [ "${{ github.event.repository.private }}" = "true" ]; then
+              echo "provenance attestation: skipped (private repository)"
+            else
+              echo "provenance attestation: attached"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
   pypi:
