@@ -426,13 +426,20 @@ async def ensure_quality_connection_columns(engine) -> None:
             "last_status": "VARCHAR(32)",
             "last_error_code": "VARCHAR(32)",
             "last_error_detail": "TEXT",
+            # Sync bookkeeping and connection-test results (separate states).
+            "last_sync_raw_count": "INTEGER",
+            "last_sync_matched_count": "INTEGER",
+            "last_tier": "VARCHAR(32)",
+            "last_test_status": "VARCHAR(32)",
+            "last_test_detail": "TEXT",
         }
         for name, ddl_type in additions.items():
             if name not in cols:
                 await _apply_ddl(
                     conn, f"ALTER TABLE quality_settings ADD COLUMN {name} {ddl_type}"
                 )
-        for name in ("last_sync_at", "last_error_at"):
+        for name in ("last_sync_at", "last_error_at", "last_sync_attempt_at",
+                     "last_test_at", "last_test_ok_at"):
             if name not in cols:
                 await _apply_ddl(
                     conn, f"ALTER TABLE quality_settings ADD COLUMN {name} TIMESTAMP"

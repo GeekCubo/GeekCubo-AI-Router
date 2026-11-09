@@ -56,6 +56,22 @@ class QualitySettings(Base):
     last_error_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Short human-readable reason (no secrets, no upstream payload).
     last_error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # ── benchmark synchronization (separate from connection tests) ─────────
+    # Time of the most recent sync attempt, successful or not.
+    last_sync_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Counts from the most recent successful sync: models returned by AA and
+    # how many matched GeekCubo's catalog.
+    last_sync_raw_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_sync_matched_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # AA tier that served the last successful request ("free" | "pro" | ...).
+    last_tier: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # ── connection test (POST /v1/quality/key/test) ────────────────────────
+    # "connected" or one of the failure codes. Only a real successful test
+    # produces "connected"; a stored key alone never does.
+    last_test_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    last_test_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_test_ok_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_test_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

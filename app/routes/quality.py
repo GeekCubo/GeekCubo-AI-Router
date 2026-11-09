@@ -35,7 +35,6 @@ from app.auto_routing import (
     litellm_routing_strategy,
 )
 from app.cache_invalidation_bus import broadcast_metrics_cache_invalidation
-from app.config import get_settings
 from app.deps import AdminContext, get_admin_context, get_db
 from app.quality_scores import (
     fetch_aa_index,
@@ -44,8 +43,14 @@ from app.quality_scores import (
 )
 from packages.db.models.quality_score_override import QualityScoreOverride
 from packages.litellm_adapter.catalog import CATALOG, CATALOG_BY_ID
+from packages.litellm_adapter.quality_index import aa_free_url, aa_models_url
 
 router = APIRouter(prefix="/v1/quality", tags=["quality"])
+
+# AA documents 100 requests per 24h window on the Free tier and 500 on Pro
+# (https://artificialanalysis.ai/data-api/docs#rate-limits). One sync costs one
+# request per page of the models list.
+AA_DOCUMENTED_FREE_DAILY_LIMIT = 100
 
 
 def _blended_cost(m) -> float:
@@ -80,13 +85,13 @@ def _serialize_aa_index(idx) -> dict[str, Any]:
             "ttft": idx.matched_count_ttft,
         },
         "configured": idx.source != "missing-key",
-        # Which AA endpoint these numbers came from, so the page can show a
-        # source line that matches what was actually fetched.
-        "endpoint": get_settings().artificial_analysis_models_url,
-        # AA's own documentation for the free data API: 1,000 requests/day.
-        # A key's account page may state a different allowance; see
-        # /v1/quality/key for the per-key figure the operator recorded.
-        "documented_daily_limit": 1000,
+        # Which AA endpoint GeekCubo calls, so the page can show a source line
+        # that matches what is actually fetched.
+        "endpoint": aa_models_url(),
+        # AA's documented daily quota for the Free tier (100 requests per
+        # 24h window). A key's account page may state a different allowance;
+        # see /v1/quality/key for the per-key figure the operator recorded.
+        "documented_daily_limit": AA_DOCUMENTED_FREE_DAILY_LIMIT,
     }
 
 
@@ -173,9 +178,10 @@ async def quality_refresh(
     """Force a fresh fetch of the AA Intelligence Index.
 
     Bypasses the 1h cache TTL AND the DB snapshot freshness check.
-    Counts against the AA daily request quota (1000/day on the free
-    tier) — operators with an outage or a very stale snapshot can use
-    this to get back online without waiting for natural expiry.
+    Counts against the AA daily request quota (one request per page of the
+    models list; 100 requests/day on the Free tier) — operators with an
+    outage or a very stale snapshot can use this to get back online without
+    waiting for natural expiry.
     On AA success, the new snapshot is also persisted to the DB so the
     next process restart inherits it.
 
@@ -187,15 +193,18 @@ async def quality_refresh(
         db=db, workspace_id=str(kc.workspace_id), force_refresh=True,
     )
     await broadcast_metrics_cache_invalidation()  # global — AA fetch refreshes all workspaces
-    return {"aa_index": _serialize_aa_index(aa)}
+    return {
+        "aa_index": _serialize_aa_index(aa),
+        "key": await _key_status(db, str(kc.workspace_id)),
+    }
 
 
 class AAKeyBody(BaseModel):
     api_key: str = Field(min_length=8, max_length=400)
     # The allowance the operator's AA account reports for this key, in
-    # requests per rolling 24h. AA's public docs state 1,000/day for the free
-    # data API, but an individual account page can show something else; when
-    # the operator records it we display their number instead of ours.
+    # requests per 24h window. AA documents 100/day for Free keys, but an
+    # individual account page can show something else; when the operator
+    # records it we display their number instead of ours.
     daily_limit: int | None = Field(default=None, ge=1, le=100000)
 
 
@@ -224,6 +233,14 @@ async def _key_status(db: AsyncSession, workspace_id: str) -> dict:
     _key, origin = await resolve_aa_api_key(db, workspace_id)
     row = await _key_row(db, workspace_id)
     stored_prefix = row.key_prefix if row is not None else None
+
+    def _ts(name: str):
+        value = getattr(row, name, None) if row is not None else None
+        return iso_utc(value) if value else None
+
+    def _val(name: str):
+        return getattr(row, name, None) if row is not None else None
+
     return {
         "configured": origin != "missing",
         # "stored" = saved here and encrypted at rest; "env" = came from
@@ -231,41 +248,66 @@ async def _key_status(db: AsyncSession, workspace_id: str) -> dict:
         "origin": origin,
         "key_prefix": stored_prefix,
         "can_clear": origin == "stored",
-        "endpoint": get_settings().artificial_analysis_models_url,
-        "documented_daily_limit": 1000,
-        "recorded_daily_limit": row.daily_limit if row is not None else None,
-        # Connection health, surfaced so the operator can tell at a glance
-        # whether the key works, without ever exposing the key itself.
+        "endpoint": aa_models_url(),
+        "free_endpoint": aa_free_url(),
+        "documented_daily_limit": AA_DOCUMENTED_FREE_DAILY_LIMIT,
+        "recorded_daily_limit": _val("daily_limit"),
+        # Credential + connection-test state. "connected" only after a real
+        # successful test; a stored key alone is "key_configured".
         "connection_status": _derive_connection_status(origin, row),
-        "last_sync_at": iso_utc(row.last_sync_at) if row is not None and row.last_sync_at else None,
-        "last_error_code": row.last_error_code if row is not None else None,
-        "last_error_detail": row.last_error_detail if row is not None else None,
-        "last_error_at": iso_utc(row.last_error_at) if row is not None and row.last_error_at else None,
+        "last_test_status": _val("last_test_status"),
+        "last_test_detail": _val("last_test_detail"),
+        "last_test_at": _ts("last_test_at"),
+        "last_test_ok_at": _ts("last_test_ok_at"),
+        # Benchmark synchronization state, reported separately.
+        "sync_status": _derive_sync_status(origin, row),
+        "last_sync_at": _ts("last_sync_at"),
+        "last_sync_attempt_at": _ts("last_sync_attempt_at"),
+        "last_sync_raw_count": _val("last_sync_raw_count"),
+        "last_sync_matched_count": _val("last_sync_matched_count"),
+        "tier": _val("last_tier"),
+        "last_error_code": _val("last_error_code"),
+        "last_error_detail": _val("last_error_detail"),
+        "last_error_at": _ts("last_error_at"),
     }
 
 
 def _derive_connection_status(origin: str, row) -> str:
-    """One stable status for the compact connection section.
+    """Credential + connectivity status for the Artificial Analysis tab.
 
-    Values: "not_configured", "connected", "invalid_key", "rate_limited",
-    "connection_failed", "cached". Derived from the persisted last fetch
-    result (last_status / last_error_code) and whether a key is present.
+    Values:
+      * "not_configured"    — no key saved and none in the environment;
+      * "key_configured"    — a key exists but no connection test has run yet
+                              (or it was replaced since the last test);
+      * "connected"         — the latest connection test succeeded;
+      * "connection_failed" — the latest connection test failed (any reason;
+                              `last_test_status` carries the specific code).
+
+    Synchronization failures never change this value; they are reported by
+    `_derive_sync_status`.
+    """
+    if origin == "missing":
+        return "not_configured"
+    test = getattr(row, "last_test_status", None) if row is not None else None
+    if not test:
+        return "key_configured"
+    return "connected" if test == "connected" else "connection_failed"
+
+
+def _derive_sync_status(origin: str, row) -> str:
+    """Benchmark synchronization status, independent of connection tests.
+
+    Values: "not_configured", "never_synced", "synced", "sync_failed".
     """
     if origin == "missing":
         return "not_configured"
     if row is None:
-        # A key exists (env) but has never been recorded here.
-        return "connected"
-    code = row.last_error_code
-    if code:
-        return code  # invalid_key | rate_limited | connection_failed
-    status = row.last_status
-    if status == "live":
-        return "connected"
-    if status in ("stale-cache", "stale-db"):
-        return "cached"
-    # A key is configured but has not been fetched yet; nothing wrong to show.
-    return "connected"
+        return "never_synced"
+    if getattr(row, "last_error_code", None):
+        return "sync_failed"
+    if getattr(row, "last_sync_at", None):
+        return "synced"
+    return "never_synced"
 
 
 @router.get("/key")
@@ -306,6 +348,12 @@ async def quality_key_save(
     row.encrypted_api_key = encrypt_credential(api_key)
     row.key_prefix = _mask_key(api_key)
     row.daily_limit = body.daily_limit
+    # A new key has not been tested yet: never carry "connected" over from the
+    # previous key. Sync history stays (it describes the stored snapshot).
+    row.last_test_status = None
+    row.last_test_detail = None
+    row.last_test_at = None
+    row.last_test_ok_at = None
     await db.commit()
 
     # Scores cached under the old key must not survive the change.
@@ -318,16 +366,27 @@ async def quality_key_test(
     kc: AdminContext = Depends(get_admin_context),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Test the configured AA key against the live endpoint, non-destructively.
+    """Test the configured AA key against the supported Free endpoint.
 
-    Uses the stored key (or the environment key, if no stored key) exactly as
-    routing would. Reports the actual result — connected, invalid key, rate
-    limited, connection failed — without modifying the stored credential or the
-    cached benchmark snapshot. The key is never echoed.
+    The Free language-models endpoint accepts any valid key (Free, Pro or
+    Commercial), so it verifies the credential without requiring a Pro plan.
+    Only the first page is requested: one request against the daily quota.
+
+    The result is recorded as the connection-test status (never as a sync
+    result), and the stored credential and benchmark snapshot are left
+    unchanged. The key is never echoed.
     """
-    from packages.litellm_adapter.quality_index import _classify_fetch_error, _fetch_remote, resolve_aa_api_key
+    import httpx
 
-    api_key, origin = await resolve_aa_api_key(db, str(kc.workspace_id))
+    from packages.litellm_adapter.quality_index import (
+        _AAFetchUnusable,
+        _classify_fetch_error,
+        _envelope_data,
+        resolve_aa_api_key,
+    )
+
+    workspace_id = str(kc.workspace_id)
+    api_key, origin = await resolve_aa_api_key(db, workspace_id)
     if origin == "missing":
         return {
             "configured": False,
@@ -335,19 +394,65 @@ async def quality_key_test(
             "detail": "No Artificial Analysis key is configured.",
         }
 
-    url = get_settings().artificial_analysis_models_url
+    url = aa_free_url()
+    tier = None
     try:
-        data = await _fetch_remote(url, api_key)
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as c:
+            r = await c.get(url, headers={"x-api-key": api_key, "Accept": "application/json"})
+            r.raise_for_status()
+            try:
+                body = r.json()
+            except ValueError as exc:
+                raise _AAFetchUnusable("not valid JSON") from exc
+        data = _envelope_data(body)
+        tier = (body.get("tier") if isinstance(body, dict) else None) or r.headers.get("x-aa-tier")
+        pagination = body.get("pagination") if isinstance(body, dict) else None
+        total_pages = pagination.get("total_pages") if isinstance(pagination, dict) else None
+        if not data:
+            raise _AAFetchUnusable("AA returned empty data array")
     except Exception as exc:  # noqa: BLE001 — classify, never propagate the raw error
         code, detail = _classify_fetch_error(exc)
-        return {"configured": True, "status": code, "detail": detail}
+        await _record_test(db, workspace_id, code, detail, ok=False)
+        return {"configured": True, "status": code, "detail": detail, "endpoint": url}
 
+    pages = f" (page 1 of {total_pages})" if isinstance(total_pages, int) and total_pages > 1 else ""
+    tier_txt = f" {tier.capitalize()} tier." if isinstance(tier, str) and tier else ""
+    detail = f"Connected.{tier_txt} {len(data)} model records returned{pages}."
+    await _record_test(db, workspace_id, "connected", detail, ok=True, tier=tier)
     return {
         "configured": True,
         "status": "connected",
-        "detail": f"Connected — {len(data)} model records returned.",
+        "detail": detail,
         "model_count": len(data),
+        "total_pages": total_pages,
+        "tier": tier,
+        "endpoint": url,
     }
+
+
+async def _record_test(
+    db: AsyncSession, workspace_id: str, status: str, detail: str, *, ok: bool,
+    tier: str | None = None,
+) -> None:
+    """Persist the connection-test outcome. Never touches the key or sync state."""
+    from datetime import datetime, timezone
+
+    from packages.db.models.quality_settings import QualitySettings
+
+    row = await _key_row(db, workspace_id)
+    if row is None:
+        # Environment key with no settings row yet: create one to hold status.
+        row = QualitySettings(workspace_id=workspace_id)
+        db.add(row)
+    now = datetime.now(timezone.utc)
+    row.last_test_status = status
+    row.last_test_detail = detail
+    row.last_test_at = now
+    if ok:
+        row.last_test_ok_at = now
+        if tier:
+            row.last_tier = tier
+    await db.commit()
 
 
 @router.delete("/key")
@@ -362,6 +467,10 @@ async def quality_key_clear(
         row.encrypted_api_key = None
         row.key_prefix = None
         row.daily_limit = None
+        row.last_test_status = None
+        row.last_test_detail = None
+        row.last_test_at = None
+        row.last_test_ok_at = None
         await db.commit()
         await broadcast_metrics_cache_invalidation()
     return await _key_status(db, workspace_id)

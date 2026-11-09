@@ -15,7 +15,7 @@ Three dicts, matching the three axes in QualityIndex:
   STATIC_TTFT     — AA `median_time_to_first_token_seconds` (lower = faster)
 
 Source: All values pulled from artificialanalysis.ai/api/v2/data/llms/models
-on 2026-05-06 and mapped to our model IDs. The mapping reconciles AA's slug
+(the legacy endpoint, retired 2026-11-04) on 2026-05-06 and mapped to our model IDs. The mapping reconciles AA's slug
 convention (`claude-4-1-opus`, `gpt-5-5`) with ours (`claude-opus-4-1`,
 `gpt-5.5`). For models with effort tiers, we pick the highest/default variant
 (e.g. `gpt-5-5` slug = "GPT-5.5 (xhigh)", which maps to our `gpt-5.5`).

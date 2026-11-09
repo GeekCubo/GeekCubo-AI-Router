@@ -122,18 +122,25 @@ class Settings(BaseSettings):
     deepseek_api_key: str | None = None
 
     # ── Quality scoring (Artificial Analysis) ──
-    # API key from https://artificialanalysis.ai (free tier: 1000 req/day).
-    # When set, model="auto" with strategy="quality" picks the model with
-    # the highest Intelligence Index from AA's benchmark aggregator instead
-    # of the most expensive (the legacy proxy that broke when Anthropic /
-    # OpenAI started pricing newer flagships LOWER than older ones).
+    # API key from https://artificialanalysis.ai. Any key (Free, Pro or
+    # Commercial) works with the Free language-models endpoint, which is the
+    # default. When set, model="auto" with strategy="quality" picks the model
+    # with the highest Intelligence Index from AA's benchmark aggregator.
     # Empty string disables AA scoring; quality strategy degrades to the
     # cost-based fallback. Attribution to AA is displayed in the dashboard
-    # whenever scores are in use, per their free-tier terms.
+    # whenever scores are in use, as AA's API terms require on every tier.
     artificial_analysis_api_key: str = ""
-    artificial_analysis_models_url: str = (
-        "https://artificialanalysis.ai/api/v2/data/llms/models"
-    )
+    # Base of the supported V2 API. The legacy `/api/v2/data/*` endpoints were
+    # retired on 2026-11-04 and answer 410 Gone.
+    artificial_analysis_api_base: str = "https://artificialanalysis.ai/api/v2"
+    # Opt in to the Pro list endpoint (`/language/models`). A key without a Pro
+    # subscription gets 403 there; the client then falls back to the Free
+    # endpoint, so enabling this never breaks synchronization.
+    artificial_analysis_use_pro: bool = False
+    # Optional full URL override for the models list (mirrors or tests). Empty
+    # means "derive from artificial_analysis_api_base". A value pointing at a
+    # retired `/api/v2/data/` path is ignored with a warning.
+    artificial_analysis_models_url: str = ""
 
     # ── Router behavior (LiteLLM Router cooldown + cascade) ──
     # How long a deployment stays cooled-down after a failure. LiteLLM's

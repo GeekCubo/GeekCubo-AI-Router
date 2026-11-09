@@ -327,6 +327,8 @@ Every Auto request filters candidates in this order. A model that fails any step
 
 Quality scores come from Artificial Analysis (with an API key) or your own manual scores; GeekCubo does not invent them.
 
+GeekCubo reads Artificial Analysis's supported V2 API: the Free language-models list (`/api/v2/language/models/free`), which accepts any Artificial Analysis key, or the Pro list when `ARTIFICIAL_ANALYSIS_USE_PRO=true`. Free keys are limited to 100 requests per day; a sync uses about four. AA's API terms require attribution wherever its data is shown, so the Quality page credits Artificial Analysis. GeekCubo stores only the per-model numbers it routes on, locally, and does not redistribute AA data. Using it is subject to AA's Terms of Use.
+
 ### Routing policies
 
 The Routing tab is the source of truth. The same settings are available through the administrator API (`GET`/`PUT /v1/routing`), which requires the dashboard session cookie and, for `PUT`, the `X-CSRF-Token` returned by `POST /api/auth/login`; `sk-geek-*` keys cannot change routing.

@@ -24,7 +24,9 @@ Three-layer cache:
   1. In-process dict (1h TTL) — fast, dies with the process
   2. DB snapshot (`quality_score_snapshots` table) — survives restart
      so a typical `docker compose down/up` doesn't burn an AA fetch
-  3. AA `/api/v2/data/llms/models` (free tier, 1000 req/day) — truth
+  3. AA `/api/v2/language/models/free` (any key; paginated) — truth.
+     The legacy `/api/v2/data/llms/models` was retired on 2026-11-04 and
+     now answers 410 Gone. Pro keys may opt in to `/api/v2/language/models`.
 
 On AA failure, we serve stale from the in-process layer first, then
 the DB layer (no time bound — better to serve old scores than to fall
@@ -37,9 +39,12 @@ empty (eg AA renamed `median_output_tokens_per_second`), the saver
 keeps the old axis's data instead of overwriting with `{}`. Prevents
 upstream regressions from disabling a routing strategy.
 
-Attribution: when scores are surfaced (dashboard, header, debug log),
-display "Powered by Artificial Analysis" linking to artificialanalysis.ai
-per their free-tier terms.
+Attribution: AA's API terms require attribution on every tier whenever
+API data is displayed or shared. The dashboard shows "Powered by
+Artificial Analysis" linking to artificialanalysis.ai next to the scores.
+Data use is also governed by AA's Terms of Use and Data Platform Terms;
+GeekCubo stores only the derived per-model numbers it routes on, locally,
+and never redistributes the raw payload.
 """
 
 from __future__ import annotations
@@ -295,13 +300,15 @@ def _build_metrics_map(
     max-quality variant's TTFT (32s) instead of its true fast-mode TTFT
     (1.77s).
 
-    AA fields:
-      - intelligence_index: under entry["evaluations"] (nested)
-      - median_output_tokens_per_second: at entry top-level
-      - median_time_to_first_token_seconds: at entry top-level
+    AA fields (V2 language-models schema, Free and Pro):
+      - intelligence_index: entry["evaluations"]["artificial_analysis_intelligence_index"]
+      - output speed:       entry["performance"]["median_output_tokens_per_second"]
+      - time to first token: entry["performance"]["median_time_to_first_token_seconds"]
 
-    Live-verified against the real AA API on 2026-05-05; field paths
-    and variant aggregate behavior confirmed before this code was written.
+    The retired legacy endpoint carried the two performance medians at the
+    entry's top level; that location is still read as a fallback so old
+    fixtures and mirrors keep parsing. `null` means "not measured" in AA's
+    conventions and is never turned into a number here.
     """
     quality_scores: dict[str, float] = {}
     tps_scores: dict[str, float] = {}
@@ -329,8 +336,13 @@ def _build_metrics_map(
             evals = {}
 
         quality = _num(evals.get("artificial_analysis_intelligence_index"))
-        tps = _num(entry.get("median_output_tokens_per_second"))
-        ttft = _num(entry.get("median_time_to_first_token_seconds"))
+        perf = entry.get("performance")
+        if not isinstance(perf, dict):
+            perf = {}
+        tps = _num(perf.get("median_output_tokens_per_second",
+                            entry.get("median_output_tokens_per_second")))
+        ttft = _num(perf.get("median_time_to_first_token_seconds",
+                             entry.get("median_time_to_first_token_seconds")))
 
         # Per-axis aggregate. Each axis keeps the most-useful variant
         # value: max for quality+throughput (higher = better), min for
@@ -368,30 +380,170 @@ class _AAFetchUnusable(Exception):
     """
 
 
-async def _fetch_remote(url: str, api_key: str, timeout: float = _FETCH_TIMEOUT_SECONDS) -> list[dict[str, Any]]:
-    """Single AA request. Tests can mock httpx at the transport boundary.
+# ── Supported V2 endpoints ─────────────────────────────────────────────
+#
+# Verified against AA's OpenAPI spec (https://artificialanalysis.ai/api/v2/openapi)
+# and the migration guide (https://artificialanalysis.ai/data-api/migrate-v2-data):
+#
+#   * Free  `/api/v2/language/models/free` — accepts any valid key (Free, Pro,
+#     Commercial). Headline indices, median performance, input/output prices.
+#   * Pro   `/api/v2/language/models` — Pro+ only; Free keys get 403. Adds
+#     blended pricing, percentiles, context window, etc.
+#
+# Both share one envelope: {tier, intelligence_index_version, pagination, data}.
+# Lists are paginated (`page`, 1-indexed; `pagination.has_more`).
+#
+# The legacy `/api/v2/data/*` family was retired on 2026-11-04 and returns
+# 410 Gone with a link to the migration guide.
 
-    Returns the raw `data` array. Raises `_AAFetchUnusable` on schema
-    mismatch (body isn't a list and isn't a `{data: list}` wrapper) so the
-    caller falls back to stale data rather than persisting `{}` and
-    poisoning the DB snapshot. Network/HTTP errors propagate as-is.
+AA_FREE_PATH = "/language/models/free"
+AA_PRO_PATH = "/language/models"
+_LEGACY_PATH_MARKER = "/api/v2/data/"
+# Hard cap on pages per sync. The Free list is ~4 pages of 200 today; the cap
+# bounds quota use (100 requests/day on Free) if pagination ever misbehaves.
+_MAX_PAGES = 20
+
+
+def aa_models_url(pro: bool | None = None) -> str:
+    """The models-list URL GeekCubo will call, derived from settings.
+
+    `artificial_analysis_models_url` (if set) overrides the derived URL, except
+    when it points at the retired legacy family — that would guarantee a 410,
+    so it is ignored with a warning and the supported endpoint is used.
     """
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as c:
-        r = await c.get(url, headers={"x-api-key": api_key, "Accept": "application/json"})
-        r.raise_for_status()
-        body = r.json()
+    from app.config import get_settings
+
+    s = get_settings()
+    override = (getattr(s, "artificial_analysis_models_url", "") or "").strip()
+    if override and _LEGACY_PATH_MARKER not in override:
+        return override
+    if override:
+        logger.warning("aa_legacy_models_url_ignored")
+    base = (getattr(s, "artificial_analysis_api_base", "") or
+            "https://artificialanalysis.ai/api/v2").rstrip("/")
+    use_pro = bool(getattr(s, "artificial_analysis_use_pro", False)) if pro is None else pro
+    return base + (AA_PRO_PATH if use_pro else AA_FREE_PATH)
+
+
+def aa_free_url() -> str:
+    """The Free list URL, used as the fallback when a Pro request gets 403."""
+    return aa_models_url(pro=False)
+
+
+@dataclass(frozen=True)
+class AAFetchResult:
+    """One completed models-list fetch (all pages)."""
+
+    data: list[dict[str, Any]]
+    tier: str | None               # caller's actual tier, from `tier` / X-AA-Tier
+    endpoint: str                  # URL that served the data (without query)
+    pages: int
+    intelligence_index_version: Any = None
+    rate_limit_remaining: int | None = None
+    pro_fallback: bool = False     # True when Pro was requested but Free served
+
+
+def _envelope_data(body: Any) -> list[dict[str, Any]]:
+    """Return the `data` list from a V2 envelope (or a bare list)."""
     if isinstance(body, dict):
-        # AA wraps the list under "data" per their schema.
         data = body.get("data")
         if isinstance(data, list):
             return data
-        # Some endpoints return the bare list at top level; accept both.
     if isinstance(body, list):
         return body
     raise _AAFetchUnusable(
-        f"AA response shape not recognized (expected list or {{data: list}}, "
-        f"got {type(body).__name__})"
+        "Artificial Analysis returned an unrecognized response format."
     )
+
+
+def _int_header(r: httpx.Response, name: str) -> int | None:
+    try:
+        return int(r.headers.get(name, ""))
+    except (TypeError, ValueError):
+        return None
+
+
+async def _fetch_pages(
+    client: httpx.AsyncClient, url: str, api_key: str
+) -> AAFetchResult:
+    headers = {"x-api-key": api_key, "Accept": "application/json"}
+    data: list[dict[str, Any]] = []
+    tier: str | None = None
+    version: Any = None
+    remaining: int | None = None
+    page = 1
+    while True:
+        params = {"page": page} if page > 1 else None
+        r = await client.get(url, headers=headers, params=params)
+        r.raise_for_status()
+        try:
+            body = r.json()
+        except ValueError as exc:
+            raise _AAFetchUnusable(
+                "Artificial Analysis returned a response that is not valid JSON."
+            ) from exc
+        data.extend(_envelope_data(body))
+        remaining = _int_header(r, "x-ratelimit-remaining")
+        if isinstance(body, dict):
+            tier = body.get("tier") or tier
+            version = body.get("intelligence_index_version", version)
+        tier = tier or r.headers.get("x-aa-tier")
+        pagination = body.get("pagination") if isinstance(body, dict) else None
+        has_more = isinstance(pagination, dict) and pagination.get("has_more") is True
+        if not has_more or page >= _MAX_PAGES:
+            break
+        page += 1
+    return AAFetchResult(
+        data=data, tier=tier, endpoint=url, pages=page,
+        intelligence_index_version=version, rate_limit_remaining=remaining,
+    )
+
+
+# Metadata about the most recent completed models-list fetch in this process
+# (tier, endpoint, page count). Read by the sync path for status display; reset
+# before each fetch so a stale value is never attributed to a new sync.
+_last_fetch_meta: dict[str, Any] = {}
+
+
+async def fetch_language_models(
+    api_key: str,
+    url: str | None = None,
+    timeout: float = _FETCH_TIMEOUT_SECONDS,
+) -> AAFetchResult:
+    """Fetch every page of the AA language-models list.
+
+    When the Pro endpoint answers 403 (the key's tier doesn't include it), the
+    Free endpoint is used instead, so opting in to Pro never breaks sync for a
+    Free key. Every other HTTP error propagates for classification.
+    """
+    target = url or aa_models_url()
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as c:
+        try:
+            result = await _fetch_pages(c, target, api_key)
+        except httpx.HTTPStatusError as exc:
+            free = aa_free_url()
+            if exc.response.status_code != 403 or target == free:
+                raise
+            result = dataclasses.replace(
+                await _fetch_pages(c, free, api_key), pro_fallback=True
+            )
+    _last_fetch_meta.clear()
+    _last_fetch_meta.update(
+        tier=result.tier, endpoint=result.endpoint, pages=result.pages,
+        pro_fallback=result.pro_fallback,
+    )
+    return result
+
+
+async def _fetch_remote(url: str, api_key: str, timeout: float = _FETCH_TIMEOUT_SECONDS) -> list[dict[str, Any]]:
+    """Fetch the models list and return the raw `data` array (all pages).
+
+    Kept as the narrow seam tests patch. Raises `_AAFetchUnusable` on schema
+    mismatch so the caller falls back to stale data rather than persisting
+    `{}` and poisoning the DB snapshot. Network/HTTP errors propagate as-is.
+    """
+    result = await fetch_language_models(api_key, url=url, timeout=timeout)
+    return result.data
 
 
 def _api_key_hash(api_key: str) -> str:
@@ -745,8 +897,9 @@ async def get_quality_index(
       2. DB snapshot (`quality_score_snapshots`) — survives restart.
          Only consulted if `db` is supplied; tests of pure parsing logic
          pass `db=None` and skip this layer.
-      3. AA `/api/v2/data/llms/models` — fresh truth, 1,000 req/day quota
-         on AA's free tier.
+      3. AA `/api/v2/language/models/free` (or the Pro list when enabled) —
+         fresh truth. Free keys have 100 requests/day; one sync uses one
+         request per page (about four today).
 
     Write order on AA success: in-process cache + DB snapshot
     (best-effort, with per-axis preservation).
@@ -759,9 +912,6 @@ async def get_quality_index(
     importing) so tests can supply a synthetic catalog without dragging
     in litellm.
     """
-    from app.config import get_settings
-
-    s = get_settings()
     api_key, _origin = await resolve_aa_api_key(db, workspace_id)
     if not api_key:
         return _apply_static_baseline(QualityIndex(
@@ -769,7 +919,7 @@ async def get_quality_index(
             raw_count=0, matched_count=0,
         ), catalog_ids)
 
-    url = s.artificial_analysis_models_url
+    url = aa_models_url()
     key_hash = _api_key_hash(api_key)
     now = time.monotonic()
 
@@ -815,6 +965,7 @@ async def get_quality_index(
 
     # Layer 3: fetch AA.
     try:
+        _last_fetch_meta.clear()
         raw = await _fetch_remote(url, api_key)
         if not raw:
             # Empty array from AA — almost always a transient outage or
@@ -823,6 +974,10 @@ async def get_quality_index(
             # the stale-fallback path instead.
             raise _AAFetchUnusable("AA returned empty data array")
         metrics = _build_metrics_map(raw, catalog_ids)
+        fresh_counts = (
+            metrics.raw_count,
+            len(set(metrics.quality_scores) | set(metrics.tps_scores) | set(metrics.ttft_scores)),
+        )
         # Treat as unusable only if ALL THREE axes are empty AND we have
         # no preservable old snapshot. Per-axis preservation in the
         # saver covers the case where one axis regressed.
@@ -859,7 +1014,9 @@ async def get_quality_index(
         )
         idx = _apply_static_baseline(idx, catalog_ids)
         _cache[key_hash] = idx
-        await _record_aa_success(db, workspace_id)
+        await _record_aa_success(
+            db, workspace_id, counts=fresh_counts, tier=_last_fetch_meta.get("tier"),
+        )
         return idx
     except Exception as exc:
         # Persist the failure reason so the Quality page can distinguish
@@ -897,31 +1054,80 @@ async def get_quality_index(
         ), catalog_ids)
 
 
-def _classify_fetch_error(exc: Exception) -> tuple[str, str]:
-    """Map a fetch exception to (code, human_detail) for the connection status.
+# Stable, machine-readable failure codes shared by the connection test and the
+# benchmark sync. Details are short English sentences that never contain key
+# material or an upstream response body.
+AA_ERROR_CODES = (
+    "invalid_key",            # 401: missing / invalid / revoked key
+    "insufficient_tier",      # 403: the key's subscription doesn't cover it
+    "endpoint_retired",       # 410: a retired endpoint was called
+    "rate_limited",           # 429: daily quota exhausted
+    "timeout",                # request timed out
+    "malformed_response",     # 200 but the body isn't the documented schema
+    "no_data",                # 200 with an empty model list
+    "no_catalog_match",       # data returned, nothing matched GeekCubo's catalog
+    "server_error",           # 5xx from AA
+    "connection_failed",      # DNS / TLS / connection errors, other HTTP codes
+)
 
-    Codes are stable and machine-readable; the detail is short, English, and
-    contains no key material, upstream payload, or provider response body.
-    """
+
+def _classify_fetch_error(exc: Exception) -> tuple[str, str]:
+    """Map a fetch exception to (code, human_detail)."""
     if isinstance(exc, httpx.HTTPStatusError):
         code = exc.response.status_code
-        if code in (401, 403):
-            return "invalid_key", "The API key was rejected (HTTP 401/403)."
+        if code == 401:
+            return "invalid_key", (
+                "Artificial Analysis rejected the API key (HTTP 401). Check that "
+                "the key is current; regenerating a key revokes the old one."
+            )
+        if code == 403:
+            return "insufficient_tier", (
+                "This key's Artificial Analysis plan does not include the "
+                "requested endpoint (HTTP 403)."
+            )
+        if code == 410:
+            return "endpoint_retired", (
+                "The Artificial Analysis endpoint has been retired (HTTP 410). "
+                "Update GeekCubo or remove a custom ARTIFICIAL_ANALYSIS_MODELS_URL."
+            )
         if code == 429:
-            return "rate_limited", "Artificial Analysis rate limit reached (HTTP 429)."
+            retry = None
+            try:
+                retry = int(exc.response.headers.get("retry-after", ""))
+            except (TypeError, ValueError, AttributeError):
+                retry = None
+            when = f" Quota resets in about {max(1, round(retry / 60))} min." if retry else ""
+            return "rate_limited", (
+                "Artificial Analysis daily request limit reached (HTTP 429)." + when
+            )
         if code >= 500:
-            return "connection_failed", f"Artificial Analysis returned a server error (HTTP {code})."
+            return "server_error", f"Artificial Analysis returned a server error (HTTP {code})."
         return "connection_failed", f"Artificial Analysis returned HTTP {code}."
     if isinstance(exc, httpx.TimeoutException):
-        return "connection_failed", "Timed out contacting Artificial Analysis."
+        return "timeout", "Timed out contacting Artificial Analysis."
     if isinstance(exc, httpx.TransportError):
         return "connection_failed", "Could not reach Artificial Analysis (network error)."
     if isinstance(exc, _AAFetchUnusable):
-        return "connection_failed", str(exc) or "Artificial Analysis returned unusable data."
+        msg = str(exc) or ""
+        if "empty" in msg:
+            return "no_data", "Artificial Analysis returned no models."
+        if "0 mapped" in msg:
+            return "no_catalog_match", (
+                "Artificial Analysis returned models, but none matched GeekCubo's "
+                "model catalog."
+            )
+        return "malformed_response", (
+            "Artificial Analysis returned data in an unexpected format."
+        )
     return "connection_failed", "Unexpected error contacting Artificial Analysis."
 
 
-async def _record_aa_success(db: "AsyncSession | None", workspace_id: str) -> None:
+async def _record_aa_success(
+    db: "AsyncSession | None",
+    workspace_id: str,
+    counts: tuple[int, int] | None = None,
+    tier: str | None = None,
+) -> None:
     """Mark the last fetch as successful, clearing any prior error.
 
     Best-effort: a write failure here must not disturb the request path.
@@ -941,11 +1147,18 @@ async def _record_aa_success(db: "AsyncSession | None", workspace_id: str) -> No
             )
         ).scalar_one_or_none()
         if row is not None:
+            now = datetime.now(timezone.utc)
             row.last_status = "live"
-            row.last_sync_at = datetime.now(timezone.utc)
+            row.last_sync_at = now
+            row.last_sync_attempt_at = now
             row.last_error_code = None
             row.last_error_detail = None
             row.last_error_at = None
+            if counts is not None:
+                row.last_sync_raw_count = counts[0]
+                row.last_sync_matched_count = counts[1]
+            if tier:
+                row.last_tier = tier
             await db.commit()
     except Exception:
         try:
@@ -982,10 +1195,12 @@ async def _record_aa_error(
             )
         ).scalar_one_or_none()
         if row is not None:
+            now = datetime.now(timezone.utc)
             row.last_status = "error"
+            row.last_sync_attempt_at = now
             row.last_error_code = code
             row.last_error_detail = detail
-            row.last_error_at = datetime.now(timezone.utc)
+            row.last_error_at = now
             await db.commit()
     except Exception:
         try:

@@ -1494,150 +1494,30 @@
 
         <!-- ─────────────── Quality scores panel ─────────────── -->
         <section id="panel-quality" class="panel">
-          <!-- Compact, always-visible connection status. The key entry form is
-               hidden behind "Replace key" so a configured install does not
-               force the operator to hunt for credential recovery. -->
-          <article class="card" id="quality-connect-card">
-            <header class="card-head">
-              <div>
-                <h2 class="card-title" data-i18n="qa.connection">Artificial Analysis connection</h2>
-                <p class="card-sub" id="quality-connect-sub">
-                  <span id="quality-connect-status" class="pill muted">—</span>
-                  <span id="quality-connect-mask"></span>
-                </p>
-              </div>
-              <div class="quality-connect-actions">
-                <button type="button" class="btn btn-ghost btn-sm" id="quality-connect-test" data-i18n="qa.test">Test connection</button>
-                <button type="button" class="btn btn-secondary btn-sm" id="quality-connect-replace" data-i18n="qa.replace">Replace key</button>
-                <button type="button" class="btn btn-danger btn-sm" id="quality-connect-remove" hidden data-i18n="qa.remove">Remove key</button>
-              </div>
-            </header>
+          <!-- One sidebar destination, three in-page tabs. Panes stay in the DOM
+               (hidden attribute), so unsaved inputs and selections survive tab
+               switches and nothing is refetched just to change tabs. -->
+          <div class="q-tabs" role="tablist" aria-label="Quality sections" data-i18n-aria="q.tabs_label" id="quality-tabs">
+            <button type="button" class="q-tab" role="tab" id="q-tab-models" data-q-tab="models"
+                    aria-controls="q-pane-models" aria-selected="true" tabindex="0">
+              <span data-i18n="q.tab_models">Models</span>
+            </button>
+            <button type="button" class="q-tab" role="tab" id="q-tab-scores" data-q-tab="scores"
+                    aria-controls="q-pane-scores" aria-selected="false" tabindex="-1">
+              <span data-i18n="q.tab_scores">Quality scores</span>
+              <span class="q-tab-dot q-tab-warn" id="q-tab-scores-flag" hidden aria-hidden="true"></span>
+              <span class="sr-only" id="q-tab-scores-sr"></span>
+            </button>
+            <button type="button" class="q-tab" role="tab" id="q-tab-aa" data-q-tab="aa"
+                    aria-controls="q-pane-aa" aria-selected="false" tabindex="-1">
+              <span data-i18n="q.tab_aa">Artificial Analysis</span>
+              <span class="q-tab-dot" id="q-tab-aa-dot" data-state="not_configured" aria-hidden="true"></span>
+              <span class="sr-only" id="q-tab-aa-sr"></span>
+            </button>
+          </div>
 
-            <!-- Last sync + latest error, shown separately so a cached-good
-                 state is never mistaken for "everything is fine right now". -->
-            <dl class="quality-facts" id="quality-connect-meta">
-              <div>
-                <dt data-i18n="qa.last_sync">Last successful sync</dt>
-                <dd id="quality-connect-sync">—</dd>
-              </div>
-              <div id="quality-connect-error-box" hidden>
-                <dt data-i18n="qa.last_error">Latest error</dt>
-                <dd id="quality-connect-error">—</dd>
-              </div>
-            </dl>
-
-            <form id="quality-key-form" class="quality-key-form" autocomplete="off" hidden>
-              <div class="quality-key-row">
-                <label class="field quality-key-field">
-                  <span class="field-label" data-i18n="ui.artificial_analysis_api_key">Artificial Analysis API key</span>
-                  <div class="field-control">
-                    <input id="quality-key-input" type="password" name="aa-api-key"
-                           spellcheck="false" autocapitalize="none" autocomplete="off"
-                           placeholder="aa-..." required minlength="8" aria-describedby="quality-key-help">
-                    <button type="button" class="icon-btn" id="quality-key-toggle"
-                            title="Show / hide key" aria-label="Show or hide key">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                    </button>
-                  </div>
-                </label>
-                <label class="field quality-limit-field">
-                  <span class="field-label"><span data-i18n="qa.daily_limit_short">Daily limit</span> <span class="muted" data-i18n="ui.optional">(optional)</span></span>
-                  <input id="quality-key-limit" type="number" min="1" max="100000"
-                         inputmode="numeric" placeholder="1000" aria-describedby="quality-key-help">
-                </label>
-                <div class="quality-key-actions">
-                  <button type="submit" class="btn btn-primary" data-i18n="ui.save_key">Save key</button>
-                  <button type="button" class="btn btn-ghost" id="quality-key-test" data-i18n="qa.test">Test connection</button>
-                  <button type="button" class="btn btn-ghost" id="quality-key-cancel" data-i18n="ui.cancel">Cancel</button>
-                </div>
-              </div>
-              <p class="field-help quality-key-help" id="quality-key-help"><span data-i18n="qa.key_hint">Stored encrypted on this server and never shown again. The previous key stays active until this one is saved.</span> <span data-i18n="qa.daily_limit_hint">Requests per 24 hours, as shown on your Artificial Analysis account page. Leave blank to use the documented 1,000 / day.</span></p>
-              <p id="quality-key-status" class="auth-status" aria-live="polite"></p>
-            </form>
-
-            <details class="setup-help" id="quality-setup-help">
-              <summary data-i18n="ui.how_quality_scoring_works">How quality scoring works</summary>
-              <div class="setup-steps">
-                <ol>
-                  <li>Sign up free at <a href="https://artificialanalysis.ai" target="_blank" rel="noopener">artificialanalysis.ai</a> and generate an API key on the account page. The account page also states that key's request allowance.</li>
-                  <li data-i18n="ui.paste_it_above_and_save_it_is_encrypted_">Paste it above and save. It is encrypted at rest, and anything already cached is discarded so the next refresh uses the new key.</li>
-                  <li>Click <strong>Refresh from AA</strong>. Scores then update on their own: results are cached for an hour and survive restarts.</li>
-                </ol>
-                <p class="callout-foot">
-                  Without a key, <code>quality</code> falls back to the legacy cost-based behavior. <code>cheapest</code> / <code>balanced</code> / <code>fastest</code> are unaffected. <strong>Manual overrides</strong> in the table below work without any AA key and take precedence when present.
-                </p>
-              </div>
-            </details>
-          </article>
-
-          <article class="card" id="quality-status-card" hidden>
-            <header class="card-head">
-              <div>
-                <h2 class="card-title" data-i18n="ui.quality_scores">Quality scores</h2>
-                <p class="card-sub">
-                  <span id="quality-status-line">Loading…</span>
-                </p>
-              </div>
-              <button id="quality-refresh" class="btn btn-secondary" type="button">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-                Refresh from AA
-              </button>
-            </header>
-
-            <!-- Provenance: what produced these numbers, and what the operator
-                 recorded about their key. Honest about the difference between
-                 "AA's documented allowance" and "the limit your account shows". -->
-            <details class="setup-help" id="quality-provenance">
-              <summary data-i18n="ui.where_these_numbers_come_from">Where these numbers come from</summary>
-              <div class="provenance">
-                <dl class="quality-facts">
-                  <div>
-                    <dt>Source</dt>
-                    <dd>Artificial Analysis — Intelligence Index, output speed and time to first token</dd>
-                  </div>
-                  <div>
-                    <dt>Endpoint</dt>
-                    <dd><code id="quality-endpoint">—</code></dd>
-                  </div>
-                  <div>
-                    <dt>Last fetched</dt>
-                    <dd id="quality-fetched">—</dd>
-                  </div>
-                  <div>
-                    <dt>Coverage</dt>
-                    <dd id="quality-coverage">—</dd>
-                  </div>
-                  <div>
-                    <dt>Key</dt>
-                    <dd id="quality-key-origin">—</dd>
-                  </div>
-                  <div>
-                    <dt>Request limit</dt>
-                    <dd id="quality-limit">—</dd>
-                  </div>
-                </dl>
-                <p class="callout-foot">
-                  <strong>Manual overrides</strong> always win over AA scores. Scores are cached for one hour;
-                  the refresh button bypasses that cache and costs one request.
-                </p>
-                <ul class="link-list">
-                  <li><a href="https://artificialanalysis.ai/methodology" target="_blank" rel="noopener">Artificial Analysis methodology →</a></li>
-                  <li><a href="https://artificialanalysis.ai/documentation" target="_blank" rel="noopener">Artificial Analysis API documentation →</a></li>
-                  <li><a href="https://artificialanalysis.ai" target="_blank" rel="noopener">artificialanalysis.ai →</a></li>
-                </ul>
-              </div>
-            </details>
-
-            <div class="callout" id="quality-preview" hidden>
-              <div class="callout-head">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
-                <strong>Right now, <code>model="auto"</code> would resolve to:</strong>
-              </div>
-              <div id="quality-preview-body"></div>
-            </div>
-          </article>
-
-          <article class="card" id="quality-table-card" hidden>
+          <div class="q-pane" role="tabpanel" id="q-pane-models" aria-labelledby="q-tab-models" tabindex="0">
+          <article class="card" id="quality-table-card">
             <header class="card-head">
               <div>
                 <h2 class="card-title" data-i18n="q.models">Models</h2>
@@ -1699,7 +1579,7 @@
                   <th class="num" title="Output tokens per second (Artificial Analysis median, max across reasoning variants). — when AA hasn't indexed this model.">TPS</th>
                   <th class="num" title="Time to first token in seconds (Artificial Analysis median, min across reasoning variants — the model's non-reasoning fast mode). — when AA hasn't indexed this model.">TTFT</th>
                   <th class="num" data-i18n="ui.m_blended">$/M blended</th>
-                  <th data-i18n="ui.status">Status</th>
+                  <th data-i18n="q.col_availability" title="Whether a configured provider key can serve this model. Benchmark data alone does not make a model deployable.">Availability</th>
                   <th class="th-actions"></th>
                 </tr></thead>
                 <tbody></tbody>
@@ -1707,9 +1587,207 @@
             </div>
 
             <p class="card-foot small muted">
-              Powered by <a href="https://artificialanalysis.ai" target="_blank" rel="noopener">Artificial Analysis</a> — Intelligence Index aggregates MMLU-Pro, GPQA, MATH, HumanEval, and other benchmarks. Attribution required.
+              Benchmark data: <a href="https://artificialanalysis.ai" target="_blank" rel="noopener">Artificial Analysis</a>. The Intelligence Index is a composite of AA's evaluations; see their methodology for its current composition. Attribution is required by AA's API terms.
             </p>
           </article>
+          </div>
+
+          <div class="q-pane" role="tabpanel" id="q-pane-scores" aria-labelledby="q-tab-scores" tabindex="0" hidden>
+          <article class="card" id="quality-status-card">
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="q.sync_title">Benchmark synchronization</h2>
+                <p class="card-sub">
+                  <span id="quality-status-line">Loading…</span>
+                </p>
+              </div>
+              <button id="quality-refresh" class="btn btn-secondary" type="button">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                Refresh from AA
+              </button>
+            </header>
+
+            <dl class="quality-facts q-sync-facts" id="quality-sync-facts">
+              <div><dt data-i18n="q.sync_last_ok">Last successful sync</dt><dd id="q-sync-last-ok">—</dd></div>
+              <div><dt data-i18n="q.sync_last_attempt">Latest attempt</dt><dd id="q-sync-last-attempt">—</dd></div>
+              <div><dt data-i18n="q.sync_returned">Models returned by AA</dt><dd id="q-sync-returned">—</dd></div>
+              <div><dt data-i18n="q.sync_matched">Matched to catalog</dt><dd id="q-sync-matched">—</dd></div>
+              <div><dt data-i18n="q.sync_unmatched">Unmatched</dt><dd id="q-sync-unmatched">—</dd></div>
+              <div><dt data-i18n="q.sync_overrides">Manual overrides</dt><dd id="q-sync-overrides">—</dd></div>
+            </dl>
+            <div class="q-sync-error" id="q-sync-error" role="status" hidden>
+              <span class="pill err" id="q-sync-error-code">—</span>
+              <span id="q-sync-error-detail"></span>
+            </div>
+            <p class="small muted" id="q-sync-empty" hidden></p>
+
+            <!-- Provenance: what produced these numbers, and what the operator
+                 recorded about their key. Honest about the difference between
+                 "AA's documented allowance" and "the limit your account shows". -->
+            <details class="setup-help" id="quality-provenance">
+              <summary data-i18n="ui.where_these_numbers_come_from">Where these numbers come from</summary>
+              <div class="provenance">
+                <dl class="quality-facts">
+                  <div>
+                    <dt>Source</dt>
+                    <dd>Artificial Analysis — Intelligence Index, output speed and time to first token (Free language-models API)</dd>
+                  </div>
+                  <div>
+                    <dt>Endpoint</dt>
+                    <dd><code id="quality-endpoint">—</code></dd>
+                  </div>
+                  <div>
+                    <dt>Last fetched</dt>
+                    <dd id="quality-fetched">—</dd>
+                  </div>
+                  <div>
+                    <dt>Coverage</dt>
+                    <dd id="quality-coverage">—</dd>
+                  </div>
+                  <div>
+                    <dt>Key</dt>
+                    <dd id="quality-key-origin">—</dd>
+                  </div>
+                  <div>
+                    <dt>Request limit</dt>
+                    <dd id="quality-limit">—</dd>
+                  </div>
+                </dl>
+                <p class="callout-foot">
+                  <strong>Precedence:</strong> a manual override always wins; otherwise the Artificial Analysis
+                  Intelligence Index is used; otherwise the model is unscored. Throughput (TPS) and time to first
+                  token come only from Artificial Analysis medians and are never estimated. A dash means
+                  &ldquo;not measured&rdquo;: the Free API omits some metrics, and many models have no
+                  Intelligence Index yet. Scores are cached for one hour; the refresh button bypasses that cache
+                  and uses one request per page of AA's model list.
+                </p>
+                <ul class="link-list">
+                  <li><a href="https://artificialanalysis.ai/methodology" target="_blank" rel="noopener">Artificial Analysis methodology →</a></li>
+                  <li><a href="https://artificialanalysis.ai/data-api/docs" target="_blank" rel="noopener">Artificial Analysis API documentation →</a></li>
+                  <li><a href="https://artificialanalysis.ai/docs/legal/Terms-of-Use.pdf" target="_blank" rel="noopener">Artificial Analysis Terms of Use →</a></li>
+                  <li><a href="https://artificialanalysis.ai" target="_blank" rel="noopener">artificialanalysis.ai →</a></li>
+                </ul>
+              </div>
+            </details>
+
+          </article>
+          <details class="card q-auto-status" id="quality-auto-status">
+            <summary class="q-auto-summary">
+              <span data-i18n="q.auto_status">Auto-routing status</span>
+              <span class="small muted" data-i18n="q.auto_status_hint">What model="auto" would pick right now. This depends on configured providers, not on benchmark sync.</span>
+            </summary>
+            <div class="callout" id="quality-preview" hidden>
+              <div class="callout-head">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+                <strong>Right now, <code>model="auto"</code> would resolve to:</strong>
+              </div>
+              <div id="quality-preview-body"></div>
+            </div>
+          </details>
+          </div>
+
+          <div class="q-pane" role="tabpanel" id="q-pane-aa" aria-labelledby="q-tab-aa" tabindex="0" hidden>
+          <article class="card" id="quality-connect-card">
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="qa.connection">Artificial Analysis connection</h2>
+                <p class="card-sub" id="quality-connect-sub">
+                  <span id="quality-connect-status" class="pill muted">—</span>
+                  <span id="quality-connect-mask"></span>
+                </p>
+              </div>
+              <div class="quality-connect-actions">
+                <button type="button" class="btn btn-ghost btn-sm" id="quality-connect-test" data-i18n="qa.test">Test connection</button>
+                <button type="button" class="btn btn-secondary btn-sm" id="quality-connect-replace" data-i18n="qa.replace">Replace key</button>
+                <button type="button" class="btn btn-danger btn-sm" id="quality-connect-remove" hidden data-i18n="qa.remove">Remove key</button>
+              </div>
+            </header>
+
+            <!-- Credential, connection test and benchmark sync are separate
+                 facts: a stored key is never shown as "Connected" until a real
+                 test succeeds, and a failed sync never hides a good test. -->
+            <dl class="quality-facts" id="quality-connect-meta">
+              <div>
+                <dt data-i18n="qa.credential">API key</dt>
+                <dd id="quality-connect-credential">—</dd>
+              </div>
+              <div class="qa-when-configured">
+                <dt data-i18n="qa.last_test">Last connection test</dt>
+                <dd id="quality-connect-test-result">—</dd>
+              </div>
+              <div class="qa-when-configured">
+                <dt data-i18n="qa.last_test_ok">Last successful test</dt>
+                <dd id="quality-connect-test-ok">—</dd>
+              </div>
+              <div class="qa-when-configured">
+                <dt data-i18n="qa.sync_status">Benchmark sync</dt>
+                <dd id="quality-connect-sync">—</dd>
+              </div>
+              <div id="quality-connect-error-box" hidden>
+                <dt data-i18n="qa.last_error">Latest error</dt>
+                <dd id="quality-connect-error">—</dd>
+              </div>
+            </dl>
+
+            <form id="quality-key-form" class="quality-key-form" autocomplete="off" hidden>
+              <div class="quality-key-row">
+                <label class="field quality-key-field">
+                  <span class="field-label" data-i18n="ui.artificial_analysis_api_key">Artificial Analysis API key</span>
+                  <div class="field-control">
+                    <input id="quality-key-input" type="password" name="aa-api-key"
+                           spellcheck="false" autocapitalize="none" autocomplete="off"
+                           placeholder="aa-..." required minlength="8" aria-describedby="quality-key-help">
+                    <button type="button" class="icon-btn" id="quality-key-toggle"
+                            title="Show / hide key" aria-label="Show or hide key">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </button>
+                  </div>
+                </label>
+                <label class="field quality-limit-field">
+                  <span class="field-label"><span data-i18n="qa.daily_limit_short">Daily limit</span> <span class="muted" data-i18n="ui.optional">(optional)</span></span>
+                  <input id="quality-key-limit" type="number" min="1" max="100000"
+                         inputmode="numeric" placeholder="100" aria-describedby="quality-key-help">
+                </label>
+                <div class="quality-key-actions">
+                  <button type="submit" class="btn btn-primary" data-i18n="ui.save_key">Save key</button>
+                  <button type="button" class="btn btn-ghost" id="quality-key-test" data-i18n="qa.test">Test connection</button>
+                  <button type="button" class="btn btn-ghost" id="quality-key-cancel" data-i18n="ui.cancel">Cancel</button>
+                </div>
+              </div>
+              <p class="field-help quality-key-help" id="quality-key-help"><span data-i18n="qa.key_hint">Stored encrypted on this server and never shown again. The previous key stays active until this one is saved.</span> <span data-i18n="qa.daily_limit_hint">Requests per 24 hours, as shown on your Artificial Analysis account page. Leave blank to use the documented 100 / day.</span></p>
+              <p id="quality-key-status" class="auth-status" aria-live="polite"></p>
+            </form>
+
+            <div class="qa-help-row">
+            <details class="setup-help" id="quality-setup-help">
+              <summary data-i18n="ui.how_quality_scoring_works">How quality scoring works</summary>
+              <div class="setup-steps">
+                <ol>
+                  <li>Sign up at <a href="https://artificialanalysis.ai" target="_blank" rel="noopener">artificialanalysis.ai</a> and generate an API key on the account page. The account page also states that key's request allowance.</li>
+                  <li data-i18n="ui.paste_it_above_and_save_it_is_encrypted_">Paste it above and save. It is encrypted at rest, and anything already cached is discarded so the next refresh uses the new key.</li>
+                  <li>Click <strong>Test connection</strong>, then <strong>Refresh from AA</strong> on the <em>Quality scores</em> tab. Scores then update on their own: results are cached for an hour and survive restarts.</li>
+                </ol>
+                <p class="callout-foot">
+                  Without a key, <code>quality</code> falls back to the legacy cost-based behavior. <code>cheapest</code> / <code>balanced</code> / <code>fastest</code> are unaffected. <strong>Manual overrides</strong> on the <em>Models</em> tab work without any AA key and take precedence when present.
+                </p>
+              </div>
+            </details>
+            <details class="setup-help" id="quality-troubleshooting">
+              <summary data-i18n="qa.troubleshooting">Connection troubleshooting</summary>
+              <div class="setup-steps">
+                <ul>
+                  <li><strong>Invalid key (401):</strong> the key was mistyped, revoked, or regenerated. Regenerating a key on Artificial Analysis revokes the old one immediately; paste the new key with <em>Replace key</em>.</li>
+                  <li><strong>Plan does not include this endpoint (403):</strong> GeekCubo uses the Free language-models endpoint, which every key can call. A 403 there usually means the key belongs to an organization without API access.</li>
+                  <li><strong>Endpoint retired (410):</strong> an old GeekCubo build or a custom <code>ARTIFICIAL_ANALYSIS_MODELS_URL</code> still points at the retired <code>/api/v2/data/</code> API. Update GeekCubo or remove the override.</li>
+                  <li><strong>Rate limited (429):</strong> Free keys have 100 requests per 24-hour window. A test uses one request; a sync uses one per page (about four). The quota resets in full when the window ends.</li>
+                  <li><strong>Timeout or network error:</strong> the server could not reach <code>artificialanalysis.ai</code> over HTTPS. Check outbound network access and DNS.</li>
+                </ul>
+              </div>
+            </details>
+
+            </div>
+          </article>
+          </div>
         </section>
       </div>
     </main>
