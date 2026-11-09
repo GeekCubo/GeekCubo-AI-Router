@@ -69,6 +69,13 @@
         <p class="auth-sub" data-i18n="auth.checking_status">Checking administrator status.</p>
       </div>
 
+      <!-- Shown when the server did not answer the startup checks in time. -->
+      <div id="unreachable-view" class="auth-view" hidden>
+        <h1 class="auth-title" data-i18n="auth.unreachable_title">Can't reach the server</h1>
+        <p class="auth-sub" data-i18n="auth.unreachable_body">GeekCubo did not answer in time. Check your connection and try again.</p>
+        <button type="button" class="btn btn-primary btn-full" id="unreachable-retry" data-i18n="auth.retry">Try again</button>
+      </div>
+
       <!-- ── Sign in ── -->
       <div id="login-view" class="auth-view" hidden>
         <h1 class="auth-title" data-i18n="auth.signin_title">Sign in</h1>

@@ -635,3 +635,81 @@ def test_existing_keys_explain_non_recoverability_and_offer_no_copy(page, live_s
     assert row.locator("button", has_text="Copy").count() == 0
     assert row.locator(".rotate-key").count() == 1 and row.locator(".rev-key").count() == 1
     assert "cannot be copied again" in page.inner_text(".keys-list-note")
+
+
+# ── startup never hangs on "Checking administrator status" ─────────────────
+
+
+def _visible_auth_view(page):
+    return page.evaluate(
+        "() => ['#checking-view','#login-view','#setup-view','#unreachable-view','#app-shell']"
+        ".filter(s => { const e = document.querySelector(s); return e && e.offsetParent !== null; })"
+    )
+
+
+def test_refresh_while_signed_out_shows_login_not_a_spinner(page, live_server):
+    """A 401 from /api/auth/me is the normal signed-out answer, not an error."""
+    for _ in range(3):
+        page.goto(live_server.base_url, wait_until="domcontentloaded")
+        page.wait_for_selector("#login-view:not([hidden])", timeout=15_000)
+        assert _visible_auth_view(page) == ["#login-view"]
+
+
+def test_logout_then_refresh_lands_on_login(page, live_server):
+    sign_in(page, live_server.base_url)
+    page.click("#account-btn")
+    page.click("#logout-btn")
+    page.wait_for_selector("#login-view:not([hidden])", timeout=15_000)
+    page.reload(wait_until="domcontentloaded")
+    page.wait_for_selector("#login-view:not([hidden])", timeout=15_000)
+    assert _visible_auth_view(page) == ["#login-view"]
+
+
+def test_expired_session_refresh_lands_on_login(page, live_server):
+    sign_in(page, live_server.base_url)
+    assert live_server.cli("revoke-sessions").returncode == 0
+    page.reload(wait_until="domcontentloaded")
+    page.wait_for_selector("#login-view:not([hidden])", timeout=15_000)
+    assert _visible_auth_view(page) == ["#login-view"]
+
+
+def test_unanswered_session_probe_ends_in_a_retryable_error(page, live_server):
+    stalled = {"on": True}
+
+    def handle(route):
+        if stalled["on"]:
+            return  # never answer: simulates a hung proxy or connection
+        route.continue_()
+
+    page.route("**/api/auth/me", handle)
+    page.goto(live_server.base_url, wait_until="domcontentloaded")
+    page.wait_for_selector("#unreachable-view:not([hidden])", timeout=40_000)
+    assert _visible_auth_view(page) == ["#unreachable-view"]
+    assert "reach the server" in page.inner_text("#unreachable-view")
+
+    stalled["on"] = False
+    page.click("#unreachable-retry")
+    page.wait_for_selector("#login-view:not([hidden])", timeout=15_000)
+
+
+def test_server_error_on_session_probe_is_not_an_endless_spinner(page, live_server):
+    page.route("**/api/auth/me", lambda r: r.fulfill(status=502, body="bad gateway"))
+    page.goto(live_server.base_url, wait_until="domcontentloaded")
+    page.wait_for_selector("#unreachable-view:not([hidden])", timeout=20_000)
+
+
+def test_remembered_session_refresh_goes_straight_to_the_dashboard(browser, live_server):
+    ctx = browser.new_context()
+    pg = ctx.new_page()
+    pg.goto(live_server.base_url, wait_until="domcontentloaded")
+    pg.wait_for_selector("#login-view:not([hidden])", timeout=15_000)
+    pg.fill("#login-username", ADMIN_USERNAME)
+    pg.fill("#login-password", ADMIN_PASSWORD)
+    pg.check("#login-remember")
+    pg.click("#login-submit")
+    pg.wait_for_selector("#app-shell:not([hidden])", timeout=15_000)
+    for _ in range(3):
+        pg.reload(wait_until="domcontentloaded")
+        pg.wait_for_selector("#app-shell:not([hidden])", timeout=15_000)
+        assert "#checking-view" not in _visible_auth_view(pg)
+    ctx.close()

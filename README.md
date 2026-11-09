@@ -15,7 +15,8 @@ A self-hosted, OpenAI-compatible AI gateway and LLM router. Bring your own provi
 [English](./README.md) | [日本語](./README.ja.md) | [中文](./README.zh.md) | [한국어](./README.ko.md) | [Deutsch](./README.de.md) | [Français](./README.fr.md) | [Español](./README.es.md) | [Italiano](./README.it.md) | [Русский](./README.ru.md) | [Português](./README.pt.md) | [Tiếng Việt](./README.vi.md) | [हिन्दी](./README.hi.md)
 
 <p align="center">
-  <img src="docs/images/geekcubo-main.gif" alt="GeekCubo tour: overview, provider keys, routing strategies and pools, chat, analytics and Connect a tool" width="640">
+  <img src="docs/images/geekcubo-main.webp" alt="GeekCubo tour: overview, provider keys, routing strategies and pools, chat, analytics and Connect a tool" width="640"><br>
+  <sub><i>Illustrative interface. Models, providers and availability depend on your configuration.</i></sub>
 </p>
 
 ## Contents
@@ -48,7 +49,7 @@ GeekCubo builds on [OrcaRouter Lite](https://github.com/Continuum-AI-Corp/OrcaRo
 | **Operations** | One container, SQLite by default; Postgres and Redis optional; startup migrations that keep your data |
 
 <p align="center">
-  <img src="docs/images/dashboard.png" alt="GeekCubo overview: spend, routing savings, latency, deployable models, quick-start code and recent requests" width="820">
+  <img src="docs/images/dashboard.webp" alt="GeekCubo overview: spend, routing savings, latency, deployable models, quick-start code and recent requests" width="820">
 </p>
 
 The **Overview** page shows 7-day spend, latency, deployable models, the most recent requests and a quick-start snippet for your endpoint.
@@ -105,18 +106,24 @@ The dashboard signs in with that username and password. A normal session lasts 1
 ## Add providers
 
 <p align="center">
-  <img src="docs/images/providers.png" alt="Provider keys page: quick-add buttons for built-in providers and a custom OpenAI-compatible provider with model discovery and capability metadata" width="560">
+  <img src="docs/images/providers.webp" alt="Provider keys page: quick-add buttons for built-in providers and a custom OpenAI-compatible provider with model discovery and capability metadata" width="560">
 </p>
 
 - **Built-in providers:** paste a key under **Providers**. Their catalog models become deployable immediately. Keys are encrypted at rest (AES-256-GCM).
 - **Custom providers:** any OpenAI-compatible API (a reseller, a gateway, a self-hosted server). Enter a name, base URL and key, fetch the model list and register the models you want. Public providers must use HTTPS; private hosts need `CUSTOM_PROVIDER_ALLOWED_LOCAL_HOSTS`.
+- **No required provider.** The screenshots use one OpenAI-compatible reseller as an example; any combination of built-in, custom and local providers works.
 - **Metadata:** each model shows context window, prices and *Supported / Unsupported / Unknown* capabilities with their source. Unknown never counts as supported, and an unknown price is never treated as free. See [Model Intelligence](docs/model-intelligence.md).
 
 ## API keys and endpoints
 
+<details>
+<summary><b>Screenshot: API Keys page</b></summary>
+
 <p align="center">
-  <img src="docs/images/api-keys.png" alt="API Keys page listing sk-geek keys with masked prefixes and Rename, Rotate and Revoke actions" width="820">
+  <img src="docs/images/api-keys.webp" alt="API Keys page listing sk-geek keys with masked prefixes and Rename, Rotate and Revoke actions" width="820">
 </p>
+
+</details>
 
 Three different things are called "API key" around GeekCubo. They are not interchangeable:
 
@@ -170,10 +177,10 @@ Streaming uses the standard OpenAI SSE format (`stream=True`). Claude Code and t
 ## Connect OpenCode and other tools
 
 <p align="center">
-  <img src="docs/images/connect-a-tool.png" alt="Connect a tool page generating an opencode.jsonc for GeekCubo, with the tool list, model choice and Local or Remote endpoint" width="820">
+  <img src="docs/images/connect-a-tool.webp" alt="Connect a tool page generating an opencode.jsonc for GeekCubo, with the tool list, model choice and Local or Remote endpoint" width="820">
 </p>
 
-**Settings → Connect a tool** generates configuration for OpenCode, Claude Code, Cursor, Continue, Cline, Kilo Code, generic OpenAI clients, cURL and the Python/TypeScript SDKs. Choose a routing profile or model and the **Local** or **Remote** endpoint; keys are referenced through `GEEKCUBO_API_KEY` and never embedded. *(The screenshot shows the older OpenCode format; the current generator output is below.)*
+**Settings → Connect a tool** generates configuration for OpenCode, Claude Code, Cursor, Continue, Cline, Kilo Code, generic OpenAI clients, cURL and the Python/TypeScript SDKs. Choose a routing profile or model and the **Local** or **Remote** endpoint; keys are referenced through `GEEKCUBO_API_KEY` and never embedded. 
 
 For OpenCode 2.x, save `opencode.jsonc` in your project or `~/.config/opencode/`:
 
@@ -194,16 +201,21 @@ For OpenCode 2.x, save `opencode.jsonc` in your project or `~/.config/opencode/`
 
 Export `GEEKCUBO_API_KEY=sk-geek-...`, run `opencode`, and pick `geek/auto`. For a remote GeekCubo use `https://<your-host>/v1`.
 
+<details>
+<summary><b>Screenshot: OpenCode working through GeekCubo Auto</b></summary>
+
 <p align="center">
-  <img src="docs/images/opencode-integration.png" alt="OpenCode using GeekCubo Auto to create calculator.py and test_calculator.py and run the unit tests" width="820">
+  <img src="docs/images/opencode-integration.webp" alt="OpenCode using GeekCubo Auto to create calculator.py and test_calculator.py and run the unit tests" width="820">
 </p>
 
-Above, OpenCode works through GeekCubo Auto on a small coding task: it writes `calculator.py` and `test_calculator.py`, runs the tests and summarizes the result. Tool calling depends on the model GeekCubo routes to. Claude Code, Cursor and the OpenCode 1.x format are covered in [Connecting tools and SDKs](docs/integrations.md).
+</details>
+
+In the OpenCode screenshot, GeekCubo Auto handles a small coding task: it writes `calculator.py` and `test_calculator.py`, runs the tests and summarizes the result. Tool calling depends on the model GeekCubo routes to. Claude Code, Cursor and the OpenCode 1.x format are covered in [Connecting tools and SDKs](docs/integrations.md).
 
 ## Automatic routing
 
 <p align="center">
-  <img src="docs/images/routing.png" alt="Routing page with strategy cards, Mundane, Hard and Fallback model pools, and the registered model table with capabilities, context and prices" width="820">
+  <img src="docs/images/routing.webp" alt="Routing page with strategy cards, Mundane, Hard and Fallback model pools, and the registered model table with capabilities, context and prices" width="820">
 </p>
 
 Send `model="auto"` (or a routing-profile id) and GeekCubo:
@@ -227,7 +239,7 @@ The chosen model is returned in `x-geek-resolved-model`. If nothing qualifies, t
 ## Chat and attachments
 
 <p align="center">
-  <img src="docs/images/native-chat.png" alt="Dashboard chat with Auto model selection, an image question, a Python code answer and a web-search answer with sources" width="820">
+  <img src="docs/images/native-chat.webp" alt="Dashboard chat with Auto model selection, an image question, a Python code answer and a web-search answer with sources" width="820">
 </p>
 
 The **Chat** tab talks to your deployed models through the same pipeline as SDK traffic, so Auto, profiles, caching and cost tracking behave identically. Pick **Auto (router picks)**, a profile or any model per conversation; each reply shows the model that answered, its tokens and cost. Replies stream, **Stop** ends the upstream request, and conversations live only in your local database with configurable retention. The header shows the context budget, so a trimmed history is never mistaken for a model failure.
@@ -236,7 +248,7 @@ The **Chat** tab talks to your deployed models through the same pipeline as SDK 
 <summary><b>Image and file attachments</b></summary>
 
 <p align="center">
-  <img src="docs/images/chat-vision.png" alt="Chat with an attached screenshot analysed by a vision-capable model" width="760">
+  <img src="docs/images/chat-vision.webp" alt="Chat with an attached screenshot analysed by a vision-capable model" width="760">
 </p>
 
 Attach files with the paperclip, drag-and-drop or paste: images (sent to vision-capable models), PDF/DOCX/RTF, spreadsheets, text and code, archives (listed, never unpacked to disk), and video/audio (metadata; video frames need `ffmpeg`). Files are verified by content, stored under opaque names and served only to the administrator. Pinning a model without vision support rejects image sends instead of silently dropping the file. Limits: 8 files per message, 25 MB per file by default (`ATTACHMENT_MAX_MB`). See [Chat](docs/chat.md).
@@ -269,9 +281,14 @@ SearXNG runs on the internal Compose network with no published port, so it is re
 
 ## Local AI Connect
 
+<details>
+<summary><b>Screenshot: Local AI Connect</b></summary>
+
 <p align="center">
-  <img src="docs/images/local-ai-integration.png" alt="Local AI page with routing behaviour switches, machines, enrollment codes and the connector install command" width="820">
+  <img src="docs/images/local-ai-integration.webp" alt="Local AI page with routing behaviour switches, machines, enrollment codes and the connector install command" width="820">
 </p>
+
+</details>
 
 Bring models running on your own hardware (Ollama, LM Studio, vLLM, llama.cpp or any OpenAI-compatible server) into the same catalog and routing. A small connector dials **out** to GeekCubo over WebSocket, so no inbound port, tunnel or VPN is needed:
 
@@ -285,9 +302,14 @@ Enrollment codes are single-use and expire after 30 minutes; a machine gets noth
 
 ## Analytics and cost tracking
 
+<details>
+<summary><b>Screenshot: Analytics</b></summary>
+
 <p align="center">
-  <img src="docs/images/analytics.png" alt="Analytics page with error, Auto, fallback and escalation rates, routing decisions, latency by provider and recent requests with tokens and latency" width="560">
+  <img src="docs/images/analytics.webp" alt="Analytics page with error, Auto, fallback and escalation rates, routing decisions, latency by provider and recent requests with tokens and latency" width="560">
 </p>
+
+</details>
 
 **Analytics** is computed from the local request log; no telemetry leaves your server. It shows error, Auto, fallback and escalation rates, how Auto requests were classified, the top models served, p50/p99 latency per provider, and every recent request with its model, routing decision, tokens, latency and status. Costs use confirmed prices only; requests with an unknown price are counted as such, never as free. An optional baseline comparison reports what the same traffic would have cost on one model at its list price. See [API endpoints and features](docs/api.md).
 
