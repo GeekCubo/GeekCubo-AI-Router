@@ -161,12 +161,20 @@ async def list_keys(
     return {"keys": [_key_public(r) for r in rows]}
 
 
+def _no_store(response: Response) -> None:
+    """Responses carrying a plaintext key must not be cached anywhere."""
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+
+
 @router.post("", status_code=201)
 async def create_key(
     body: CreateKey,
+    response: Response,
     _record: SessionRecord = Depends(get_admin_session),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    _no_store(response)
     name = _clean_name(body.name)
     allowlist = await _validate_model_allowlist(db, body.model_allowlist)
     full_key, key_hash, key_prefix = generate_api_key()
@@ -220,6 +228,7 @@ async def update_key(
 async def rotate_key(
     key_id: str,
     body: RotateKey,
+    response: Response,
     _record: SessionRecord = Depends(get_admin_session),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -229,6 +238,7 @@ async def rotate_key(
     authenticating until the operator revokes it, so a client can be cut over
     without a window where neither key works.
     """
+    _no_store(response)
     original = await _get_key(db, key_id, DEFAULT_WORKSPACE_ID)
     name = _clean_name(body.name or f"{original.name} (rotated)")
     full_key, key_hash, key_prefix = generate_api_key()

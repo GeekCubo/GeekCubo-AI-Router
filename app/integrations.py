@@ -24,11 +24,17 @@ from typing import Any
 OPENCODE_PROVIDER_ID = "geek"
 OPENCODE_PROVIDER_NAME = "GeekCubo"
 
+# The client-side environment variable that holds a GeekCubo-issued key
+# (sk-geek-...) in every GeekCubo-specific example. It is a convention chosen
+# here, not something any client recognizes on its own: each generated config
+# wires it in explicitly ({env:...}, $VAR, os.environ[...]).
 ENV_KEY = "GEEKCUBO_API_KEY"
 
-# Every client's model field is rendered without a "/v1" suffix, because each
-# SDK appends its own path.
-DEFAULT_LOCAL_BASE = "http://127.0.0.1:8787/v1"
+# OpenCode's documented runtime package for OpenAI-compatible endpoints
+# (https://opencode.ai/docs/providers#custom), and the AI SDK package the
+# legacy `provider`/`npm` schema uses.
+OPENCODE_PACKAGE = "@opencode/ai/providers/openai-compatible"
+OPENCODE_LEGACY_NPM = "@ai-sdk/openai-compatible"
 
 
 @dataclass
@@ -105,22 +111,27 @@ def build(
 def _opencode(*, base_url: str, model: str, variant: str | None) -> IntegrationResult:
     """OpenCode supports two config shapes; they are not interchangeable.
 
-    `providers` + `package`/`settings` is the current schema; `provider` +
-    `npm`/`options` is the legacy one. Merging them produces a file OpenCode
-    rejects, so the caller picks one.
+    * current (OpenCode 2.x): `providers` + `env` / `package` / `settings`,
+      exactly the custom-provider recipe in https://opencode.ai/docs/providers.
+      The credential comes from the variable named in `env`.
+    * legacy (OpenCode 1.x): `provider` + `npm` / `options`, still accepted by
+      2.x but marked deprecated in https://opencode.ai/config.json.
+
+    Merging them produces a file OpenCode rejects, so the caller picks one.
+    Both were run against OpenCode 2.2.6 (text request, key sent as Bearer).
     """
     variants = [
-        {"id": "current", "label": "Current (providers / package)"},
-        {"id": "legacy", "label": "Legacy (provider / npm)"},
+        {"id": "current", "label": "OpenCode 2.x (providers)"},
+        {"id": "legacy", "label": "OpenCode 1.x (provider, deprecated)"},
     ]
-    variant = variant or "current"
+    variant = variant if variant in ("current", "legacy") else "current"
     if variant == "legacy":
         code = _jsonable(
             {
                 "$schema": "https://opencode.ai/config.json",
                 "provider": {
                     OPENCODE_PROVIDER_ID: {
-                        "npm": "@ai-sdk/openai-compatible",
+                        "npm": OPENCODE_LEGACY_NPM,
                         "name": OPENCODE_PROVIDER_NAME,
                         "options": {
                             "baseURL": base_url,
@@ -131,7 +142,7 @@ def _opencode(*, base_url: str, model: str, variant: str | None) -> IntegrationR
                 },
             }
         )
-        filename = "opencode.jsonc"
+        key_note = f"The key is read from `{ENV_KEY}` through `{{env:{ENV_KEY}}}`; no secret is written to the file."
     else:
         code = _jsonable(
             {
@@ -139,17 +150,16 @@ def _opencode(*, base_url: str, model: str, variant: str | None) -> IntegrationR
                 "providers": {
                     OPENCODE_PROVIDER_ID: {
                         "name": OPENCODE_PROVIDER_NAME,
-                        "package": "@ai-sdk/openai-compatible",
-                        "settings": {
-                            "baseURL": base_url,
-                            "apiKey": "{env:" + ENV_KEY + "}",
-                        },
+                        "env": [ENV_KEY],
+                        "package": OPENCODE_PACKAGE,
+                        "settings": {"baseURL": base_url},
                         "models": {model: {"name": f"{OPENCODE_PROVIDER_NAME} {model}"}},
                     }
                 },
             }
         )
-        filename = "opencode.jsonc"
+        key_note = f"The key is read from the `{ENV_KEY}` environment variable named in `env`; no secret is written to the file."
+    filename = "opencode.jsonc"
 
     return IntegrationResult(
         app="opencode",
@@ -160,17 +170,17 @@ def _opencode(*, base_url: str, model: str, variant: str | None) -> IntegrationR
         variant=variant,
         variants=variants,
         steps=[
-            f"Save this as `{filename}` in your project root (or `~/.config/opencode/{filename}` for every project).",
-            f"Export your key: `export {ENV_KEY}=sk-geek-...`",
-            "Merge it into your existing config rather than overwriting it — see the notes below.",
-            f"Run `opencode`, then pick `{OPENCODE_PROVIDER_ID}/{model}` with the model switcher.",
+            f"Save this as `{filename}` in your project root (or `~/.config/opencode/{filename}` for every project). Merge it into an existing file rather than overwriting it.",
+            f"Put your GeekCubo key (from Settings → API Keys) in the environment OpenCode starts from: `export {ENV_KEY}=sk-geek-...`",
+            f"Run `opencode`, then pick `{OPENCODE_PROVIDER_ID}/{model}` with `/models` (or `opencode run -m {OPENCODE_PROVIDER_ID}/{model} \"...\"`).",
         ],
         notes=[
             f"In OpenCode the model appears as `{OPENCODE_PROVIDER_ID}/{model}`. The provider prefix is OpenCode's; the value sent to GeekCubo is `{model}`.",
-            "The API key is referenced as `{env:GEEKCUBO_API_KEY}` — no secret is written to the file.",
-            "If your file is JSONC, comments are allowed; the generated config is plain JSON, which JSONC also accepts.",
+            key_note,
+            f"`{ENV_KEY}` holds a GeekCubo-issued key, not an OpenAI key. The name is only a convention this file wires in; OpenCode does not look for it by itself.",
+            "Verified with OpenCode 2.2.6 for text generation (streamed chat completions). Agentic tool calling depends on the model GeekCubo routes to.",
         ],
-        docs="https://opencode.ai/docs",
+        docs="https://opencode.ai/docs/providers#custom",
     )
 
 

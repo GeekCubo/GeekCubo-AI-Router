@@ -25,6 +25,15 @@ from packages.auth.sessions import CSRF_HEADER_NAME, SESSION_COOKIE_NAME
 _BROWSER_MAX_AGE = 12 * 60 * 60
 
 
+def _cookie_max_age(issued) -> int:
+    """Normal sessions keep the 12-hour cookie. A remembered session's cookie
+    lives exactly as long as its server-side record (never longer)."""
+    if not getattr(issued, "persistent", False):
+        return _BROWSER_MAX_AGE
+    remaining = (issued.expires_at - datetime.now(timezone.utc)).total_seconds()
+    return max(0, int(remaining))
+
+
 def request_is_https(request: Request) -> bool:
     if request.url.scheme == "https":
         return True
@@ -46,7 +55,7 @@ def set_session_cookies(response: Response, issued, request: Request) -> None:
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=issued.raw_token,
-        max_age=_BROWSER_MAX_AGE,
+        max_age=_cookie_max_age(issued),
         httponly=True,      # unreadable from JavaScript: XSS cannot exfiltrate it
         samesite="lax",
         secure=secure,

@@ -16,7 +16,7 @@ other devices" and password-change invalidation real rather than advisory.
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, false
 from sqlalchemy.orm import Mapped, mapped_column
 
 from packages.db.models.base import Base, SoftDeleteMixin, TimestampMixin, UUIDMixin
@@ -76,6 +76,12 @@ class AdminSession(Base, UUIDMixin, TimestampMixin):
     )
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
     user_agent: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # "Remember me": a fixed 14-day lifetime from sign-in with no idle limit.
+    # False (the default, and every row created before this column existed)
+    # keeps the normal 12-hour / 60-minute-idle policy.
+    persistent: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
 
 
 class SetupToken(Base, UUIDMixin, TimestampMixin, SoftDeleteMixin):

@@ -90,6 +90,11 @@
               </button>
             </div>
           </label>
+          <label class="checkline auth-remember" for="login-remember">
+            <input type="checkbox" id="login-remember" name="remember">
+            <span data-i18n="auth.remember">Remember me for 14 days</span>
+          </label>
+          <p class="field-help muted auth-remember-hint" data-i18n="auth.remember_hint">Stay signed in on this browser for up to 14 days, even after closing it. Use only on a device you trust.</p>
           <button type="submit" class="btn btn-primary btn-full" id="login-submit">
             <span data-i18n="auth.sign_in">Sign In</span>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
@@ -1099,9 +1104,10 @@
                   <select id="int-model"></select></label>
                 <fieldset class="int-endpoint">
                   <legend class="field-label" data-i18n="ui.endpoint">Endpoint</legend>
-                  <label class="checkline"><input type="radio" name="int-ep" value="local" checked> Local</label>
-                  <label class="checkline"><input type="radio" name="int-ep" value="remote"> Remote</label>
-                  <input id="int-remote-url" type="url" placeholder="https://your-domain.example.com/v1" autocomplete="off" hidden aria-label="Remote base URL">
+                  <label class="checkline"><input type="radio" name="int-ep" value="local" checked> <span data-i18n="int.ep_local">Local (this host)</span></label>
+                  <label class="checkline"><input type="radio" name="int-ep" value="remote"> <span data-i18n="int.ep_remote">Remote (public URL)</span></label>
+                  <input id="int-remote-url" type="url" placeholder="https://your-geekcubo-host/v1" autocomplete="off" hidden aria-label="Remote base URL">
+                  <p class="field-help small muted" id="int-ep-help"></p>
                 </fieldset>
                 <label class="field" id="int-variant-wrap" hidden><span class="field-label" data-i18n="ui.format">Format</span>
                   <select id="int-variant"></select></label>
@@ -1303,15 +1309,27 @@
             <header class="card-head">
               <div>
                 <h2 class="card-title" data-i18n="keys.title">Router API keys</h2>
-                <p class="card-sub">
-                  These <code>sk-geek-*</code> keys authenticate SDK and CLI
-                  traffic against this installation — OpenCode, the OpenAI /
-                  Anthropic / Gemini SDKs, <code>curl</code>. They are
-                  <strong>not</strong> dashboard passwords and cannot sign in here.
-                  The secret is shown <strong>once</strong>, at creation.
-                </p>
+                <p class="card-sub" data-i18n="keys.intro">These sk-geek-* keys authenticate SDK and CLI traffic against this installation. They are not dashboard passwords and cannot sign in here.</p>
               </div>
             </header>
+
+            <!-- Endpoint: resolved server-side from PUBLIC_BASE_URL (never from
+                 request headers), with the loopback address as the fallback. -->
+            <div class="key-endpoint" id="key-endpoint">
+              <div class="key-endpoint-head">
+                <span class="field-label" data-i18n="keys.endpoint_label">API endpoint (OpenAI-compatible)</span>
+                <span class="pill" id="key-endpoint-kind"></span>
+              </div>
+              <div class="key-endpoint-row">
+                <code id="key-endpoint-url" class="key-endpoint-url">…</code>
+                <button type="button" class="btn btn-ghost btn-sm" id="key-endpoint-copy" data-i18n="keys.copy_url">Copy URL</button>
+              </div>
+              <p class="card-sub muted small" id="key-endpoint-note"></p>
+              <p class="card-sub small">
+                <span data-i18n="keys.endpoint_protocols">GeekCubo keys work with this OpenAI-compatible endpoint and with the native Anthropic Messages and Gemini protocols served by this installation.</span>
+                <a href="#integrations" data-go-tab="integrations" id="key-connect-link" data-i18n="keys.connect_link">Connect a tool →</a>
+              </p>
+            </div>
 
             <form id="key-form" class="inline-form">
               <label class="field flex-grow">
@@ -1330,26 +1348,37 @@
               </label>
               <button type="submit" class="btn btn-primary" id="key-create-btn">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                Generate New API Key
+                <span data-i18n="keys.generate">Generate New API Key</span>
               </button>
             </form>
 
             <div id="new-key-display" class="callout callout-info" hidden>
               <div class="callout-head">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-                <strong>Copy this key now — it cannot be retrieved later.</strong>
+                <strong data-i18n="keys.reveal_title">Copy this key now — it cannot be retrieved later.</strong>
               </div>
               <p class="card-sub" id="new-key-caption"></p>
-              <pre class="code-pre"><code id="new-key-value"></code><button class="copy-btn" id="new-key-copy" data-tooltip="Copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></pre>
-              <div class="key-snippet">
-                <span class="muted small" data-i18n="ui.use_it_with_opencode">Use it with OpenCode:</span>
-                <pre class="code-block" id="new-key-snippet"></pre>
-                <button class="copy-btn" id="new-key-snippet-copy" data-tooltip="Copy" data-i18n="ui.copy">Copy</button>
+              <pre class="code-pre"><code id="new-key-value"></code></pre>
+              <div class="key-reveal-actions">
+                <button type="button" class="btn btn-primary btn-sm" id="new-key-copy" data-i18n="keys.copy_key">Copy API key</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="new-key-download" data-i18n="keys.download">Download credentials</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="new-key-dismiss" data-i18n="keys.dismiss">I saved it — hide key</button>
               </div>
-              <p class="card-sub muted">
-                Store it in your shell as <code>OPENAI_API_KEY</code> (or the
-                equivalent for your client). GeekCubo keeps only a hash — if
-                you lose it, generate a new key.
+              <p class="card-sub small key-reveal-status" id="new-key-status" role="status" aria-live="polite"></p>
+              <p class="card-sub small muted" data-i18n="keys.download_warning">The downloaded file contains the secret key. Store it in a password manager or a protected location and delete the download afterwards.</p>
+
+              <div class="key-snippet">
+                <span class="field-label" data-i18n="keys.not_openai">This is a GeekCubo API key, not an OpenAI API key. OpenAI-compatible applications may use the variable name OPENAI_API_KEY while connecting to GeekCubo.</span>
+                <span class="muted small" data-i18n="keys.env_geekcubo">GeekCubo-specific clients (the examples in Connect a tool):</span>
+                <pre class="code-block" id="new-key-snippet-geekcubo"></pre>
+                <button type="button" class="btn btn-ghost btn-sm key-snippet-copy" id="new-key-snippet-geekcubo-copy" data-i18n="ui.copy">Copy</button>
+                <span class="muted small" data-i18n="keys.env_openai">Generic OpenAI-compatible SDKs:</span>
+                <pre class="code-block" id="new-key-snippet"></pre>
+                <button type="button" class="btn btn-ghost btn-sm key-snippet-copy" id="new-key-snippet-copy" data-i18n="ui.copy">Copy</button>
+              </div>
+              <p class="card-sub small">
+                <span data-i18n="keys.store_hint">GeekCubo stores only a hash of this key, so it cannot be shown again. If you lose it, rotate or revoke the key and use the replacement.</span>
+                <a href="#integrations" data-go-tab="integrations" data-i18n="keys.connect_cta">Configure a specific tool in Connect a tool →</a>
               </p>
             </div>
 
@@ -1378,6 +1407,7 @@
                 </tr></thead>
                 <tbody></tbody>
               </table>
+              <p class="card-sub small muted keys-list-note" data-i18n="keys.list_note">Existing keys show only a masked prefix. GeekCubo keeps a one-way hash, so a full key cannot be copied again after it was created — rotate a key to get a new secret.</p>
               <div class="empty-state" id="keys-empty" hidden>
                 <div class="empty-illustration">
                   <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="14" r="4"/><path d="M11 11l9-9M16 6l3 3M14 8l3 3"/></svg>
@@ -1450,8 +1480,9 @@
               <div>
                 <h2 class="card-title" data-i18n="sec.sessions">Sessions</h2>
                 <p class="card-sub" data-i18n="ui.signed_in_browsers_for_this_administrato">
-                  Signed-in browsers for this administrator. Sessions expire after
-                  12 hours, or 60 minutes idle.
+                  Signed-in browsers for this administrator. Normal sessions expire
+                  after 12 hours, or 60 minutes idle. Remembered sessions end exactly
+                  14 days after sign-in.
                 </p>
               </div>
               <div class="inline-form">
@@ -1464,6 +1495,7 @@
                   <th data-i18n="ui.device">Device</th>
                   <th>IP</th>
                   <th data-i18n="ui.last_active">Last active</th>
+                  <th data-i18n="sec.session_type">Session</th>
                   <th data-i18n="ui.expires">Expires</th>
                 </tr></thead>
                 <tbody></tbody>

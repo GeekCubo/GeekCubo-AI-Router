@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import integrations
 from app.deps import get_admin_context, get_db
+from app.public_endpoint import align_with_public, endpoint_info
 from app.routing_profiles import live_profiles
 from app.seed import DEFAULT_WORKSPACE_ID
 
@@ -31,9 +32,10 @@ def _validate_base(url: str) -> str:
     if any(ch in url for ch in "\"'`\\ \n\r\t<>{}"):
         raise HTTPException(status_code=422, detail="base_url contains characters that are not allowed")
     url = url.rstrip("/")
-    if not url.endswith("/v1"):
-        url += "/v1"
-    return url
+    while url.endswith("/v1"):
+        url = url[: -len("/v1")].rstrip("/")
+    # Never emit http:// for a host the operator configured as https://.
+    return align_with_public(url + "/v1")
 
 
 @router.get("/options")
@@ -57,16 +59,32 @@ async def options(
     except Exception:
         deployable_models = []
 
-    local = str(request.base_url).rstrip("/") + "/v1"
+    # Trusted configuration only; request Host / X-Forwarded-* never decide
+    # what a downloadable config file points at.
+    ep = endpoint_info(request)
     return {
         "apps": integrations.catalog(),
         "routing_ids": [{"id": "auto", "label": "auto (built-in)"}] + [
             {"id": p.slug, "label": f"{p.slug} — {p.display_name}"} for p in profiles
         ],
         "models": deployable_models[:500],
-        "local_base_url": local,
-        "default_remote_base_url": "https://your-domain.example.com/v1",
+        "local_base_url": ep["local_api_base_url"],
+        # The configured public endpoint (PUBLIC_BASE_URL), or null when unset.
+        "public_base_url": ep["public_api_base_url"],
+        "default_endpoint": "remote" if ep["public_configured"] else "local",
+        "remote_placeholder": "https://your-geekcubo-host/v1",
+        "env_key": integrations.ENV_KEY,
     }
+
+
+@router.get("/endpoint")
+async def endpoint(request: Request, _kc = Depends(get_admin_context)) -> dict:
+    """The API base URL clients should use, for Settings -> API Keys.
+
+    Contains no credential. Resolved from configuration (PUBLIC_BASE_URL),
+    with the loopback address as the fallback.
+    """
+    return {**endpoint_info(request), "env_key": integrations.ENV_KEY}
 
 
 @router.get("/config")

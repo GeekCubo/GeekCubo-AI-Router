@@ -112,6 +112,8 @@ class SetupIn(BaseModel):
 class LoginIn(BaseModel):
     username: str
     password: str
+    # "Remember me for 14 days". Off unless the box is explicitly ticked.
+    remember: bool = False
 
 
 class ChangePasswordIn(BaseModel):
@@ -141,6 +143,7 @@ def _session_payload(record: SessionRecord) -> dict:
         "csrf_token": record.csrf_token,
         "expires_at": record.expires_at.isoformat(),
         "last_seen_at": record.last_seen_at.isoformat(),
+        "persistent": record.persistent,
     }
 
 
@@ -216,7 +219,11 @@ async def login(
 
     _record_success(key)
     issued = await create_session(
-        db, admin, ip_address=_client_ip(request), user_agent=request.headers.get("user-agent")
+        db,
+        admin,
+        ip_address=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+        persistent=body.remember,
     )
     set_session_cookies(response, issued, request)
     return {
@@ -224,6 +231,7 @@ async def login(
         "username": admin.username,
         "csrf_token": issued.csrf_token,
         "expires_at": issued.expires_at.isoformat(),
+        "persistent": issued.persistent,
     }
 
 
@@ -315,6 +323,8 @@ async def list_sessions(
             "last_seen_at": last_seen.isoformat(),
             "expires_at": expires.isoformat(),
             "expired": expires <= now,
+            # Remembered (14-day) session vs normal session. Never the token.
+            "persistent": bool(row.persistent),
             "ip_address": row.ip_address,
             # Truncated to a browser family: enough to recognize "that was my
             # laptop", not enough to fingerprint.

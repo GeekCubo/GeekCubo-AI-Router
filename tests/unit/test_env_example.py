@@ -23,9 +23,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = ROOT / ".env.example"
 
-# Read by something other than `Settings`: the installer (PUBLIC_BASE_URL) and
-# the bundled SearXNG Compose service (SEARXNG_SECRET).
-NON_SETTINGS_VARS = {"PUBLIC_BASE_URL", "SEARXNG_SECRET"}
+# Read by something other than `Settings`: the bundled SearXNG Compose service.
+# (PUBLIC_BASE_URL is a Settings field and is also read by ./install.sh.)
+NON_SETTINGS_VARS = {"SEARXNG_SECRET"}
 
 # Settings fields deliberately left out of the template.
 INTERNAL_FIELDS: set[str] = set()

@@ -313,8 +313,37 @@ def test_integrations_generates_opencode_config_without_secrets(page, live_serve
     )
     code = page.inner_text("#int-code")
     assert '"geek"' in code
-    assert "{env:GEEKCUBO_API_KEY}" in code
+    # OpenCode 2.x reads the credential from the variable named in `env`.
+    assert '"env": [\n        "GEEKCUBO_API_KEY"\n      ]' in code
     assert "sk-" not in code.replace("sk-geek-...", "")
+    # The test server has no PUBLIC_BASE_URL, so Local is the default and the
+    # URL is the loopback address the dashboard was opened on.
+    assert page.is_checked('input[name="int-ep"][value="local"]')
+    assert f'"baseURL": "{live_server.base_url}/v1"' in code
+
+    # The 1.x format is still offered and references the same variable.
+    page.select_option("#int-variant", "legacy")
+    page.wait_for_function(
+        "() => document.querySelector('#int-code')?.textContent.includes('\"npm\"')",
+        timeout=15_000,
+    )
+    assert "{env:GEEKCUBO_API_KEY}" in page.inner_text("#int-code")
+
+
+def test_integrations_remote_endpoint_is_used_verbatim_and_never_downgraded(page, live_server):
+    _signed_in(page, live_server)
+    page.click('[data-tab="integrations"]')
+    page.wait_for_selector("#int-apps .int-app", timeout=15_000)
+    page.check('input[name="int-ep"][value="remote"]')
+    assert page.is_visible("#int-remote-url")
+    page.fill("#int-remote-url", "https://gateway.example.net/v1/")
+    page.wait_for_function(
+        "() => document.querySelector('#int-code')?.textContent.includes('https://gateway.example.net/v1')",
+        timeout=15_000,
+    )
+    code = page.inner_text("#int-code")
+    assert "/v1/v1" not in code
+    assert "http://gateway.example.net" not in code
 
 
 def test_integrations_lists_every_supported_tool(page, live_server):

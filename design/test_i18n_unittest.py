@@ -28,12 +28,12 @@ SAME_AS_ENGLISH_OK = {
     # Loanwords and identical terms that are genuinely correct in the target
     # language. Everything else that matches English is a translation miss.
     "en": set(),
-    "es": {"auth.password", "ui.endpoint", "ui.manual"},
-    "pt": {"auth.password", "ui.status", "ui.pools", "ui.endpoint", "ui.volume", "ui.manual"},
+    "es": {"auth.password", "ui.endpoint", "ui.manual", "sec.session_normal", "keys.endpoint_local"},
+    "pt": {"auth.password", "ui.status", "ui.pools", "ui.endpoint", "ui.volume", "ui.manual", "keys.endpoint_local"},
     "de": {"tab.routing.title", "ui.system", "ui.status", "ui.pools", "ui.format",
            "ui.name", "ui.routing", "ui.administrator", "ui.optional"},
     "fr": {"auth.password", "sec.sessions", "ui.pools", "ui.messages", "ui.mode",
-           "ui.messages_2", "ui.format", "ui.volume", "ui.actions"},
+           "ui.messages_2", "ui.format", "ui.volume", "ui.actions", "sec.active"},
     "it": {"auth.password", "ui.provider", "ui.legacy", "ui.endpoint", "ui.volume"},
     "zh": set(), "ja": set(), "ko": set(), "ru": set(), "hi": set(), "ar": set(),
 }

@@ -281,10 +281,11 @@ async def ensure_auth_columns(engine) -> None:
 
     The three new tables (`admin_accounts`, `admin_sessions`,
     `admin_setup_tokens`) are created by `create_all`, which only ever adds
-    missing tables. The one change to an existing table is a nullable
-    `api_keys.expires_at`: NULL means "never expires", so every key issued
-    before this release keeps working with no data rewrite. Idempotent — a
-    no-op once the column exists.
+    missing tables. Changes to existing tables: a nullable
+    `api_keys.expires_at` (NULL means "never expires", so every key issued
+    before this release keeps working with no data rewrite) and
+    `admin_sessions.persistent` (FALSE for every existing session, which keeps
+    its original policy). Idempotent — a no-op once the columns exist.
 
     Nothing here touches `key_hash`, workspace references, allowlists, budgets,
     spend counters, provider credentials or request history.
@@ -299,6 +300,20 @@ async def ensure_auth_columns(engine) -> None:
         if "expires_at" not in cols:
             await _apply_ddl(
                 conn, "ALTER TABLE api_keys ADD COLUMN expires_at TIMESTAMP"
+            )
+
+        # "Remember me" sessions. Existing rows default to FALSE, i.e. they keep
+        # exactly the policy they were issued under.
+        session_cols = {
+            c["name"]
+            for c in await conn.run_sync(
+                lambda sync: inspect(sync).get_columns("admin_sessions")
+            )
+        }
+        if session_cols and "persistent" not in session_cols:
+            await _apply_ddl(
+                conn,
+                "ALTER TABLE admin_sessions ADD COLUMN persistent BOOLEAN NOT NULL DEFAULT FALSE",
             )
 
 

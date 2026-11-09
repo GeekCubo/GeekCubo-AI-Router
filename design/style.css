@@ -302,6 +302,9 @@ code {
 .auth-sub   { margin: 4px 0 0; font-size: 13px; color: var(--ink-2); }
 .auth-form  { margin-top: var(--s-4); display: flex; flex-direction: column; gap: var(--s-3); }
 .auth-form .field-help { margin-top: 2px; }
+.auth-form .auth-remember { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-1, inherit); cursor: pointer; }
+.auth-form .auth-remember input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent, currentColor); }
+.auth-form .auth-remember-hint { margin: calc(-1 * var(--s-2)) 0 0 24px; font-size: 12px; }
 .auth-view .callout { margin-top: var(--s-3); padding: var(--s-3); gap: var(--s-2); }
 .auth-view .callout .card-sub {
   overflow-wrap: anywhere; font-size: 12.5px; margin: 0; }
@@ -1898,6 +1901,26 @@ kbd {
 }
 .key-snippet { margin-top: var(--s-3); display: flex; flex-direction: column; gap: 6px; }
 .key-snippet .code-block { text-align: left; user-select: all; }
+.key-snippet .key-snippet-copy { align-self: flex-start; }
+.key-reveal-actions { display: flex; flex-wrap: wrap; gap: var(--s-2); margin-top: var(--s-2); }
+.key-reveal-status { min-height: 1.2em; margin: 4px 0 0; }
+.key-reveal-status[data-state="ok"] { color: var(--ok-text, var(--ink-2)); }
+.key-reveal-status[data-state="err"] { color: var(--err-text, var(--warn-text)); }
+
+/* API endpoint card on Settings -> API Keys. */
+.key-endpoint {
+  margin: 0 0 var(--s-4);
+  padding: var(--s-3);
+  border: 1px solid var(--line, var(--border, rgba(127,127,127,.25)));
+  border-radius: 10px;
+  background: var(--surface-2, transparent);
+}
+.key-endpoint-head { display: flex; align-items: center; gap: var(--s-2); margin-bottom: 6px; }
+.key-endpoint-row { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
+.key-endpoint-url { font-size: 13.5px; word-break: break-all; user-select: all; flex: 1 1 260px; min-width: 0; }
+.key-endpoint p { margin: 6px 0 0; }
+.keys-list-note { margin: var(--s-2) 0 0; }
+.int-endpoint .field-help { margin: 4px 0 0; }
 
 
 /* ==========================================================================

@@ -198,6 +198,77 @@ def test_legacy_localstorage_key_is_purged(page, live_server):
     page.wait_for_selector("#login-view:not([hidden])", timeout=15_000)
 
 
+def test_remember_me_is_unchecked_by_default_and_gives_a_normal_session(browser, live_server):
+    ctx = browser.new_context()
+    pg = ctx.new_page()
+    pg.goto(live_server.base_url, wait_until="domcontentloaded")
+    pg.wait_for_selector("#login-view:not([hidden])", timeout=15_000)
+    assert pg.is_visible("#login-remember")
+    assert pg.is_checked("#login-remember") is False
+    assert "14" in pg.inner_text("label[for='login-remember']")
+    sign_in(pg, live_server.base_url)
+    cookie = {c["name"]: c for c in ctx.cookies()}["geekcubo_admin_session"]
+    # A normal session's cookie keeps the original 12-hour lifetime.
+    import time
+    assert cookie["expires"] - time.time() <= 12 * 3600 + 60
+    ctx.close()
+
+
+def test_remember_me_survives_a_browser_restart_and_is_listed(browser, live_server, tmp_path):
+    import time
+
+    ctx = browser.new_context()
+    pg = ctx.new_page()
+    pg.goto(live_server.base_url, wait_until="domcontentloaded")
+    pg.wait_for_selector("#login-view:not([hidden])", timeout=15_000)
+    pg.fill("#login-username", ADMIN_USERNAME)
+    pg.fill("#login-password", ADMIN_PASSWORD)
+    pg.check("#login-remember")
+    pg.click("#login-submit")
+    pg.wait_for_selector("#app-shell:not([hidden])", timeout=15_000)
+
+    cookie = {c["name"]: c for c in ctx.cookies()}["geekcubo_admin_session"]
+    assert cookie["httpOnly"] is True and cookie["sameSite"] == "Lax"
+    remaining = cookie["expires"] - time.time()
+    assert 13.9 * 86400 < remaining <= 14 * 86400 + 60, remaining
+    # Not readable by page scripts, not in storage.
+    assert "geekcubo_admin_session" not in pg.evaluate("() => document.cookie")
+    assert cookie["value"] not in pg.evaluate("() => JSON.stringify({...localStorage, ...sessionStorage})")
+
+    # "Close the browser": persist cookies, drop the context, open a new one.
+    state = tmp_path / "state.json"
+    ctx.storage_state(path=str(state))
+    ctx.close()
+    ctx2 = browser.new_context(storage_state=str(state))
+    pg2 = ctx2.new_page()
+    pg2.goto(live_server.base_url, wait_until="networkidle")
+    pg2.wait_for_selector("#app-shell:not([hidden])", timeout=15_000)
+    assert not pg2.is_visible("#login-view")
+
+    # Security page shows the remembered session and its expiry, never a token.
+    pg2.click('#tabs [data-tab="security"]')
+    pg2.wait_for_selector("#panel-security.active")
+    pg2.wait_for_function(
+        "() => document.querySelector('#sessions-table tbody tr') !== null", timeout=10_000
+    )
+    table = pg2.inner_text("#sessions-table").lower()
+    assert "remembered (14 days)" in table
+    assert "remembered" in pg2.inner_text("#sec-session").lower()
+    assert cookie["value"] not in pg2.content()
+
+    # Logging out ends it for good.
+    pg2.click("#account-btn")
+    pg2.wait_for_selector("#account-dropdown:not([hidden])")
+    pg2.click("#logout-btn")
+    pg2.wait_for_selector("#login-view:not([hidden])", timeout=15_000)
+    ctx2.close()
+    ctx3 = browser.new_context(storage_state=str(state))  # stale cookie replayed
+    pg3 = ctx3.new_page()
+    pg3.goto(live_server.base_url, wait_until="networkidle")
+    pg3.wait_for_selector("#login-view:not([hidden])", timeout=15_000)
+    ctx3.close()
+
+
 def test_logout_from_account_menu(page, live_server):
     sign_in(page, live_server.base_url)
     page.click("#account-btn")
@@ -456,3 +527,111 @@ def test_mobile_viewport_login(browser, live_server):
     sign_in(pg, live_server.base_url)
     assert pg.is_visible("#app-shell")
     ctx.close()
+
+
+# ── API Keys page: endpoint and creation flow ──────────────────────────────
+
+
+def test_api_keys_page_shows_the_endpoint_and_copies_it(browser, live_server):
+    ctx = browser.new_context(permissions=["clipboard-read", "clipboard-write"])
+    page = ctx.new_page()
+    try:
+        _open_keys(page, live_server)
+        page.wait_for_function(
+            "() => document.querySelector('#key-endpoint-url').textContent.includes('/v1')",
+            timeout=15_000,
+        )
+        url = page.inner_text("#key-endpoint-url").strip()
+        # No PUBLIC_BASE_URL on the test server: the local loopback endpoint.
+        assert url == f"{live_server.base_url}/v1"
+        assert url.count("/v1") == 1
+        assert "local" in page.inner_text("#key-endpoint-kind").lower()
+        assert "PUBLIC_BASE_URL" in page.inner_text("#key-endpoint-note")
+        page.click("#key-endpoint-copy")
+        page.wait_for_timeout(300)
+        assert page.evaluate("() => navigator.clipboard.readText()") == url
+        # The Connect a tool link goes to the integrations tab.
+        page.click("#key-connect-link")
+        page.wait_for_selector("#panel-integrations.active", timeout=10_000)
+    finally:
+        ctx.close()
+
+
+def test_new_key_copy_download_and_dismiss(browser, live_server, tmp_path):
+    ctx = browser.new_context(permissions=["clipboard-read", "clipboard-write"], accept_downloads=True)
+    page = ctx.new_page()
+    try:
+        _open_keys(page, live_server)
+        secret = _generate(page, "copy-me")
+        text = page.inner_text("#new-key-display")
+        assert "not an OpenAI API key" in text
+        assert f'GEEKCUBO_API_KEY="{secret}"' in page.inner_text("#new-key-snippet-geekcubo")
+        assert f'OPENAI_API_KEY="{secret}"' in page.inner_text("#new-key-snippet")
+        assert f'OPENAI_BASE_URL="{live_server.base_url}/v1"' in page.inner_text("#new-key-snippet")
+        assert "Use it with OpenCode" not in text
+
+        page.click("#new-key-copy")
+        page.wait_for_function(
+            "() => document.querySelector('#new-key-status').dataset.state === 'ok'", timeout=5_000)
+        assert page.evaluate("() => navigator.clipboard.readText()") == secret
+
+        with page.expect_download() as dl:
+            page.click("#new-key-download")
+        download = dl.value
+        assert download.suggested_filename == "geekcubo-api-key-copy-me.env"
+        saved = tmp_path / download.suggested_filename
+        download.save_as(str(saved))
+        content = saved.read_text()
+        assert f"GEEKCUBO_API_KEY={secret}" in content
+        assert "SECRET" in content and "not an OpenAI key" in content
+
+        # Nothing persisted in browser storage or the URL.
+        storage = page.evaluate("() => JSON.stringify({...localStorage, ...sessionStorage})")
+        assert secret not in storage and secret not in page.url
+
+        page.click("#new-key-dismiss")
+        assert page.is_hidden("#new-key-display")
+        assert secret not in page.content()
+    finally:
+        ctx.close()
+
+
+def test_new_key_clipboard_failure_is_reported_and_selects_the_key(browser, live_server):
+    ctx = browser.new_context()
+    page = ctx.new_page()
+    try:
+        _open_keys(page, live_server)
+        secret = _generate(page, "clip-blocked")
+        page.evaluate(
+            "() => { navigator.clipboard.writeText = () => Promise.reject(new Error('denied')); }")
+        page.click("#new-key-copy")
+        page.wait_for_function(
+            "() => document.querySelector('#new-key-status').dataset.state === 'err'", timeout=5_000)
+        assert "copy it manually" in page.inner_text("#new-key-status").lower()
+        assert page.evaluate("() => window.getSelection().toString().trim()") == secret
+    finally:
+        ctx.close()
+
+
+def test_leaving_the_keys_page_wipes_the_revealed_key(page, live_server):
+    _open_keys(page, live_server)
+    secret = _generate(page, "wipe-me")
+    page.click('#tabs [data-tab="overview"]')
+    page.wait_for_selector("#panel-overview.active")
+    assert secret not in page.content()
+    page.click('#tabs [data-tab="keys"]')
+    page.wait_for_selector("#panel-keys.active")
+    assert page.is_hidden("#new-key-display")
+
+
+def test_existing_keys_explain_non_recoverability_and_offer_no_copy(page, live_server):
+    _open_keys(page, live_server)
+    _generate(page, "listed-key")
+    page.reload(wait_until="networkidle")
+    page.wait_for_selector("#app-shell:not([hidden])", timeout=15_000)
+    page.click('#tabs [data-tab="keys"]')
+    row = page.locator("#keys-table tbody tr", has_text="listed-key").first
+    row.wait_for(timeout=15_000)
+    assert row.locator("button", has_text="Copy").count() == 0
+    assert row.locator(".rotate-key").count() == 1 and row.locator(".rev-key").count() == 1
+    assert "cannot be copied again" in page.inner_text(".keys-list-note")

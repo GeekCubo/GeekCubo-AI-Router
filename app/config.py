@@ -57,6 +57,12 @@ class Settings(BaseSettings):
     # would set Secure cookies on a plain-http origin and silently break
     # sign-in), or forge the client IP in session metadata.
     trust_proxy_headers: bool = False
+    # The address clients use to reach this installation, e.g.
+    # https://api.example.com. Shown on Settings -> API Keys and pre-filled in
+    # Connect a tool (with /v1 appended). Empty = only the local loopback
+    # endpoint is shown. Never derived from request headers. ./install.sh also
+    # displays it.
+    public_base_url: str = ""
 
     # ── Encryption ──
     # NOTE: credential_encryption_key is NOT auto-generated. If empty, the

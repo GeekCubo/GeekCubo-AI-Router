@@ -38,6 +38,12 @@ SESSION_TTL = timedelta(hours=12)
 # Idle window: a session untouched for this long is dead even if its absolute
 # expiry has not arrived.
 SESSION_IDLE_TTL = timedelta(minutes=60)
+# "Remember me for 14 days": a hard limit measured from sign-in. Activity never
+# extends it (expires_at is written once, at creation), and there is no idle
+# limit, so closing the browser or leaving the dashboard alone does not end it.
+# Revocation (logout, password change/reset, "log out other sessions", CLI)
+# applies exactly as for normal sessions.
+REMEMBER_TTL = timedelta(days=14)
 
 
 def _now() -> datetime:
@@ -67,6 +73,7 @@ class SessionIssued:
     raw_token: str
     csrf_token: str
     expires_at: datetime
+    persistent: bool = False
 
 
 @dataclass
@@ -77,6 +84,7 @@ class SessionRecord:
     csrf_token: str
     expires_at: datetime
     last_seen_at: datetime
+    persistent: bool = False
 
 
 async def create_session(
@@ -85,12 +93,14 @@ async def create_session(
     *,
     ip_address: str | None = None,
     user_agent: str | None = None,
+    persistent: bool = False,
 ) -> SessionIssued:
     """Mint a new session row and return the plaintext cookie secret once."""
     raw_token = _new_secret()
     csrf_token = _new_secret()
     now = _now()
-    expires_at = now + SESSION_TTL
+    persistent = bool(persistent)
+    expires_at = now + (REMEMBER_TTL if persistent else SESSION_TTL)
     db.add(
         AdminSession(
             admin_id=admin.id,
@@ -100,10 +110,13 @@ async def create_session(
             last_seen_at=now,
             ip_address=(ip_address or "")[:64] or None,
             user_agent=(user_agent or "")[:255] or None,
+            persistent=persistent,
         )
     )
     await db.commit()
-    return SessionIssued(raw_token=raw_token, csrf_token=csrf_token, expires_at=expires_at)
+    return SessionIssued(
+        raw_token=raw_token, csrf_token=csrf_token, expires_at=expires_at, persistent=persistent
+    )
 
 
 async def load_session(
@@ -137,10 +150,17 @@ async def load_session(
     now = _now()
     expires_at = _as_utc(session.expires_at)
     last_seen = _as_utc(session.last_seen_at)
+    persistent = bool(session.persistent)
     if expires_at is None or expires_at <= now:
         await revoke_session(db, session.id)
         return None
-    if last_seen is None or (now - last_seen) > SESSION_IDLE_TTL:
+    # Defence in depth: a remembered session can never outlive REMEMBER_TTL
+    # from its creation, whatever expires_at says.
+    created = _as_utc(session.created_at)
+    if persistent and created is not None and now - created > REMEMBER_TTL:
+        await revoke_session(db, session.id)
+        return None
+    if not persistent and (last_seen is None or (now - last_seen) > SESSION_IDLE_TTL):
         await revoke_session(db, session.id)
         return None
 
@@ -160,6 +180,7 @@ async def load_session(
         csrf_token=session.csrf_token,
         expires_at=expires_at,
         last_seen_at=last_seen or now,
+        persistent=persistent,
     )
 
 
