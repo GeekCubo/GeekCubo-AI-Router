@@ -59,3 +59,7 @@ dist/
 *.swp
 .DS_Store
 Thumbs.db
+
+# Owner scratch space for screenshots and other temporary working files.
+/temp/
+/tmp/

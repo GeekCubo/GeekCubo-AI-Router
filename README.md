@@ -14,41 +14,60 @@ A self-hosted, OpenAI-compatible AI gateway and LLM router. Bring your own provi
 
 [English](./README.md) | [日本語](./README.ja.md) | [中文](./README.zh.md) | [한국어](./README.ko.md) | [Deutsch](./README.de.md) | [Français](./README.fr.md) | [Español](./README.es.md) | [Italiano](./README.it.md) | [Русский](./README.ru.md) | [Português](./README.pt.md) | [Tiếng Việt](./README.vi.md) | [हिन्दी](./README.hi.md)
 
+<p align="center">
+  <img src="docs/images/geekcubo-main.gif" alt="GeekCubo tour: overview, provider keys, routing strategies and pools, chat, analytics and Connect a tool" width="640">
+</p>
+
 ## Contents
 
-- [Why GeekCubo](#why-geekcubo)
-- [Key features](#key-features)
-- [Quickstart](#quickstart)
-- [Call it from an SDK](#call-it-from-an-sdk)
-- [Keys and endpoints](#keys-and-endpoints)
-- [Connect OpenCode and other tools](#connect-opencode-and-other-tools)
-- [How Auto routing works](#how-auto-routing-works)
-- [Limitations](#limitations)
-- [Documentation](#documentation)
-- [Support GeekCubo](#support-geekcubo)
-- [License](#license)
+- [Why GeekCubo](#why-geekcubo) · [Features](#features) · [Architecture at a glance](#architecture-at-a-glance)
+- [Install](#install) · [First-time administrator setup](#first-time-administrator-setup) · [Add providers](#add-providers)
+- [API keys and endpoints](#api-keys-and-endpoints) · [Call it from an SDK](#call-it-from-an-sdk) · [Connect OpenCode and other tools](#connect-opencode-and-other-tools)
+- [Automatic routing](#automatic-routing) · [Chat and attachments](#chat-and-attachments) · [Optional web search](#optional-web-search)
+- [Local AI Connect](#local-ai-connect) · [Analytics and cost tracking](#analytics-and-cost-tracking) · [Security and deployment](#security-and-deployment)
+- [Limitations](#limitations) · [Troubleshooting and documentation](#troubleshooting-and-documentation) · [Support GeekCubo](#support-geekcubo) · [License](#license)
 
 ## Why GeekCubo
 
 Automatic model routing should give developers control, not uncertainty. With your own provider keys it is not always obvious which provider handles a request, whether a fallback might use a separately billed service, or why a particular model was chosen.
 
-GeekCubo is a server you run yourself where routing policies, eligible providers, model capabilities, pricing assumptions and fallback behaviour are visible and configurable: **your keys, your infrastructure, your routing decisions.** There is no hosted account, no routing wallet and no dependency on a GeekCubo-operated host.
+GeekCubo is a server you run yourself where routing policies, eligible providers, model capabilities, pricing assumptions and fallback behaviour are visible and configurable: **your keys, your infrastructure, your routing decisions.** There is no hosted account, no routing wallet and no dependency on a GeekCubo-operated host. Any provider that speaks the OpenAI API can be added; none is required.
 
 GeekCubo builds on [OrcaRouter Lite](https://github.com/Continuum-AI-Corp/OrcaRouter-Lite), an open-source project released under the MIT License, and is independently developed and maintained. It is not affiliated with or endorsed by the original OrcaRouter developers. See [License](#license).
 
-## Key features
+## Features
 
-- **OpenAI-compatible API** — `/v1/chat/completions` with streaming, plus native Anthropic Messages (`/v1/messages`, used by Claude Code) and Gemini (`/v1beta/models/...`) endpoints on the same routing pipeline.
-- **`model="auto"`** — filters models by eligibility, confirmed price, required capabilities and context window, then ranks them with the strategy you choose (Balanced, Cheapest, Quality First, Adaptive, Adaptive-Gated). Unknown never counts as supported or free.
-- **Bounded fallback** — retryable upstream failures move to the next capable candidate; every decision is explained in `x-geek-routing-*` response headers.
-- **Bring your own keys** — built-in providers (OpenAI, Anthropic, Google, Groq, Together, Fireworks, xAI, DeepSeek), any OpenAI-compatible custom provider, and local models through [Local AI Connect](docs/local-ai-connect.md). Credentials are encrypted at rest.
-- **Dashboard** — providers, routing profiles, model metadata, analytics and spend, an in-browser Chat, and **Connect a tool** configuration for OpenCode, Claude Code, Cursor, Continue, Cline, Kilo Code and SDKs. Twelve interface languages.
-- **Secure by default** — a local administrator account with server-side sessions and CSRF protection, hash-only `sk-geek-*` inference keys, and a loopback-only default bind.
-- **Simple to run** — one container, SQLite by default; Postgres and Redis optional.
+| Area | What you get |
+|---|---|
+| **APIs** | OpenAI-compatible `/v1/chat/completions` (streaming), Anthropic Messages `/v1/messages` (used by Claude Code), Gemini `/v1beta/models/...`, and `GET /v1/models` — all on one routing pipeline |
+| **Auto routing** | `model="auto"` filters by eligibility, confirmed price, required capabilities and context window, then ranks with Balanced, Cheapest, Quality First, Adaptive or Adaptive-Gated |
+| **Fallback** | Retryable upstream failures move to the next capable candidate; every decision is explained in `x-geek-routing-*` headers |
+| **Providers** | OpenAI, Anthropic, Google, Groq, Together, Fireworks, xAI and DeepSeek built in; any OpenAI-compatible custom provider; local models through Local AI Connect |
+| **Dashboard** | Overview, providers, routing and profiles, model metadata, analytics, in-browser Chat, API keys and **Connect a tool**, in twelve interface languages |
+| **Security** | One local administrator account, server-side sessions with CSRF protection, hash-only `sk-geek-*` keys, credentials encrypted at rest, loopback-only default bind |
+| **Operations** | One container, SQLite by default; Postgres and Redis optional; startup migrations that keep your data |
 
-## Quickstart
+<p align="center">
+  <img src="docs/images/dashboard.png" alt="GeekCubo overview: spend, routing savings, latency, deployable models, quick-start code and recent requests" width="820">
+</p>
 
-**Prerequisites:** Linux, macOS or WSL with Docker Engine 24+ and the Compose v2 plugin, about 1 GB RAM and 2 GB disk.
+The **Overview** page shows 7-day spend, latency, deployable models, the most recent requests and a quick-start snippet for your endpoint.
+
+## Architecture at a glance
+
+```
+ Your apps, SDKs and tools              GeekCubo (one container)                   Upstream models
+ ─────────────────────────              ─────────────────────────                  ───────────────
+ OpenAI SDK, curl, OpenCode ──┐         auth: sk-geek-* key (hash lookup)
+ Claude Code / Anthropic SDK ─┼──────►  routing: auto · profile · pinned model ──►  OpenAI, Anthropic, Google, …
+ google-genai SDK ────────────┘         fallback, cache, cost accounting      ──►  custom OpenAI-compatible providers
+                                        SQLite/Postgres: keys, usage, policy  ◄──  Local AI Connect (outbound agent)
+ Browser ──── dashboard (administrator session + CSRF) ──┘
+```
+
+## Install
+
+**Prerequisites:** Linux, macOS or WSL with Docker Engine 24+ and the Compose v2 plugin (`docker compose version`), about 1 GB RAM and 2 GB disk.
 
 ```bash
 git clone https://github.com/GeekCubo/GeekCubo-AI-Router.git
@@ -56,7 +75,13 @@ cd GeekCubo-AI-Router
 ./install.sh
 ```
 
-The installer checks Docker and Compose, creates `.env` from `.env.example` only when it is missing, runs `docker compose up -d --build`, waits for `/health`, and prints the dashboard URL. On a fresh install it also prints a **one-time administrator setup token**: open the dashboard, choose **Create Administrator Account**, and paste it. Rerunning the installer is safe; it never deletes the data volume or regenerates credentials.
+The installer checks Docker and Compose, creates `.env` from `.env.example` only when it is missing, optionally sets up [web search](#optional-web-search), runs `docker compose up -d --build`, waits for `/health` and prints the dashboard URL. Rerunning it is safe: it never deletes the data volume or regenerates credentials.
+
+| Address | What it is |
+|---|---|
+| `http://127.0.0.1:8787` | The dashboard (local only by default) |
+| `http://127.0.0.1:8787/v1` | The OpenAI-compatible API base URL for clients on the same machine |
+| `https://<your-host>` | Optional: your own HTTPS hostname behind a reverse proxy ([Security and deployment](#security-and-deployment)) |
 
 <details>
 <summary><b>Manual install (same Compose file)</b></summary>
@@ -71,52 +96,65 @@ docker compose exec api python -m app.admin_cli setup-token
 
 </details>
 
-Then add provider keys in the dashboard (or as upstream keys in `.env`) and generate an `sk-geek-*` key under **Settings → API Keys**.
+## First-time administrator setup
 
-**Network exposure.** The bundled Compose file publishes the dashboard on `127.0.0.1:8787` only, so the administrator login is never exposed directly. For remote access use an SSH tunnel (`ssh -L 8787:127.0.0.1:8787 <user>@<server>`) or a TLS reverse proxy with `TRUST_PROXY_HEADERS=true`, and set `PUBLIC_BASE_URL` in `.env` to your own address (for example `https://api.example.com`). See [DEPLOYMENT.md](DEPLOYMENT.md).
+On a fresh install the installer prints a **one-time setup token** (also available with `docker compose exec api python -m app.admin_cli setup-token`). Open the dashboard, choose **Create Administrator Account**, and enter a username, a password of 8+ characters and the token. There are no default credentials and no public registration; the token is single-use and stops working once the account exists.
 
-**Secrets.** On first start GeekCubo generates `CREDENTIAL_ENCRYPTION_KEY` and `API_KEY_PEPPER` and stores them next to the database (`.geekcubo-secrets`, mode `0600`). Back them up together with the `geekcubo-data` volume, and never run `docker compose down -v`. See [Security](docs/security.md#encryption-at-rest).
+The dashboard signs in with that username and password. A normal session lasts 12 hours (60 minutes idle); **Remember me for 14 days** keeps a trusted browser signed in until a fixed expiry. Forgot the password? Run `docker compose exec api python -m app.admin_cli reset-password` on the host. Details: [Security](docs/security.md).
+
+## Add providers
+
+<p align="center">
+  <img src="docs/images/providers.png" alt="Provider keys page: quick-add buttons for built-in providers and a custom OpenAI-compatible provider with model discovery and capability metadata" width="560">
+</p>
+
+- **Built-in providers:** paste a key under **Providers**. Their catalog models become deployable immediately. Keys are encrypted at rest (AES-256-GCM).
+- **Custom providers:** any OpenAI-compatible API (a reseller, a gateway, a self-hosted server). Enter a name, base URL and key, fetch the model list and register the models you want. Public providers must use HTTPS; private hosts need `CUSTOM_PROVIDER_ALLOWED_LOCAL_HOSTS`.
+- **Metadata:** each model shows context window, prices and *Supported / Unsupported / Unknown* capabilities with their source. Unknown never counts as supported, and an unknown price is never treated as free. See [Model Intelligence](docs/model-intelligence.md).
+
+## API keys and endpoints
+
+<p align="center">
+  <img src="docs/images/api-keys.png" alt="API Keys page listing sk-geek keys with masked prefixes and Rename, Rotate and Revoke actions" width="820">
+</p>
+
+Three different things are called "API key" around GeekCubo. They are not interchangeable:
+
+| Credential | Looks like | Where it belongs | What it does |
+|---|---|---|---|
+| **GeekCubo API key** | `sk-geek-...` | The **client**. Generated in **Settings → API Keys**, shown once, stored hash-only | Authenticates apps, SDKs and tools to GeekCubo |
+| **Upstream provider key** | `sk-...`, `sk-ant-...`, … | The GeekCubo **server**: the Providers page or the server `.env` | Lets GeekCubo call OpenAI, Anthropic, a reseller, … |
+| **Client variables** | `GEEKCUBO_API_KEY`, `OPENAI_API_KEY`, `OPENAI_BASE_URL` | The client's environment | `GEEKCUBO_API_KEY` is read by configs from Connect a tool; generic OpenAI SDKs read `OPENAI_API_KEY` and `OPENAI_BASE_URL` |
+
+When a client sets `OPENAI_API_KEY` and points `OPENAI_BASE_URL` at GeekCubo, the value is your **GeekCubo key** — it does not have to be a key bought from OpenAI. The `OPENAI_API_KEY` in GeekCubo's *server* `.env` is different: your upstream OpenAI account. Lost an `sk-geek-*` key? It cannot be recovered; **Rotate** or **Revoke** it.
+
+**Settings → API Keys** also shows the endpoint clients should use: your `PUBLIC_BASE_URL` with `/v1` when set, otherwise `http://127.0.0.1:8787/v1`. Details: [Which key goes where](docs/security.md#which-key-goes-where).
 
 ## Call it from an SDK
-
-The local base URL is `http://127.0.0.1:8787/v1`. From another machine use your own HTTPS address, `https://<your-host>/v1`; **Settings → API Keys** shows the exact endpoint for your installation.
 
 ```python
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://127.0.0.1:8787/v1",
-    api_key="sk-geek-...",          # a GeekCubo key, not an OpenAI key
+    base_url="http://127.0.0.1:8787/v1",   # or https://<your-host>/v1
+    api_key="sk-geek-...",                  # a GeekCubo key
 )
 r = client.chat.completions.create(
-    model="auto",                    # or a routing profile, or a specific model id
+    model="auto",                           # or a routing profile, or a specific model id
     messages=[{"role": "user", "content": "Hello!"}],
 )
-print(r.choices[0].message.content)
+print(r.choices[0].message.content, r.model)   # r.model: the model that served it
 ```
 
 <details>
-<summary><b>Node.js</b></summary>
+<summary><b>Node.js, curl, streaming, Anthropic and Gemini SDKs</b></summary>
 
 ```js
 import OpenAI from "openai";
-
-const client = new OpenAI({
-  baseURL: "http://127.0.0.1:8787/v1",
-  apiKey: process.env.GEEKCUBO_API_KEY,   // sk-geek-...
-});
-
-const r = await client.chat.completions.create({
-  model: "auto",
-  messages: [{ role: "user", content: "Hello!" }],
-});
+const client = new OpenAI({ baseURL: "http://127.0.0.1:8787/v1", apiKey: process.env.GEEKCUBO_API_KEY });
+const r = await client.chat.completions.create({ model: "auto", messages: [{ role: "user", content: "Hello!" }] });
 console.log(r.choices[0].message.content);
 ```
-
-</details>
-
-<details>
-<summary><b>curl</b></summary>
 
 ```bash
 curl http://127.0.0.1:8787/v1/chat/completions \
@@ -125,33 +163,19 @@ curl http://127.0.0.1:8787/v1/chat/completions \
   -d '{"model":"auto","messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
-</details>
-
-<details>
-<summary><b>Streaming, Anthropic and Gemini SDKs</b></summary>
-
-Streaming uses the standard OpenAI SSE format (`stream=True`). Claude Code and the Anthropic SDKs use `/v1/messages`; the google-genai SDK uses `/v1beta/models`. Base URLs for those clients have **no** `/v1` suffix. See [Connecting tools and SDKs](docs/integrations.md).
+Streaming uses the standard OpenAI SSE format (`stream=True`). Claude Code and the Anthropic SDKs use `/v1/messages`; the google-genai SDK uses `/v1beta/models`. Their base URLs have **no** `/v1` suffix, for example `ANTHROPIC_BASE_URL=http://127.0.0.1:8787`. See [Connecting tools and SDKs](docs/integrations.md).
 
 </details>
-
-## Keys and endpoints
-
-| Credential | Where it belongs | Purpose |
-|---|---|---|
-| Upstream provider key (`sk-...`, `sk-ant-...`, ...) | GeekCubo **server**: dashboard or server `.env` | GeekCubo calls OpenAI, Anthropic and others with it |
-| GeekCubo inference key (`sk-geek-...`) | The **client**. Generated in **Settings → API Keys**, shown once, stored only as a hash | Clients authenticate to GeekCubo with it |
-| `GEEKCUBO_API_KEY` | The client's environment | The variable GeekCubo-specific configs (Connect a tool) read the key from |
-| `OPENAI_API_KEY` + `OPENAI_BASE_URL` | The client's environment | What generic OpenAI SDKs read; the value is still your `sk-geek-*` key |
-
-The `OPENAI_API_KEY` in GeekCubo's *server* `.env` is your upstream OpenAI account, not a GeekCubo key. Lost an `sk-geek-*` key? It cannot be recovered; rotate or revoke it. Details: [Which key goes where](docs/security.md#which-key-goes-where).
-
-The dashboard itself signs in with a username and password. Sessions last 12 hours (60 minutes idle), or up to 14 days with **Remember me** on a trusted device. Forgot the password? Run `docker compose exec api python -m app.admin_cli reset-password` on the host. See [Security](docs/security.md).
 
 ## Connect OpenCode and other tools
 
-**Settings → Connect a tool** generates configuration for OpenCode, Claude Code, Cursor, Continue, Cline, Kilo Code, generic OpenAI clients, cURL and the Python/TypeScript SDKs, using your installation's endpoint. Keys are referenced through `GEEKCUBO_API_KEY` and never embedded.
+<p align="center">
+  <img src="docs/images/connect-a-tool.png" alt="Connect a tool page generating an opencode.jsonc for GeekCubo, with the tool list, model choice and Local or Remote endpoint" width="820">
+</p>
 
-For OpenCode 2.x, `opencode.jsonc`:
+**Settings → Connect a tool** generates configuration for OpenCode, Claude Code, Cursor, Continue, Cline, Kilo Code, generic OpenAI clients, cURL and the Python/TypeScript SDKs. Choose a routing profile or model and the **Local** or **Remote** endpoint; keys are referenced through `GEEKCUBO_API_KEY` and never embedded. *(The screenshot shows the older OpenCode format; the current generator output is below.)*
+
+For OpenCode 2.x, save `opencode.jsonc` in your project or `~/.config/opencode/`:
 
 ```jsonc
 {
@@ -168,9 +192,19 @@ For OpenCode 2.x, `opencode.jsonc`:
 }
 ```
 
-Export `GEEKCUBO_API_KEY=sk-geek-...`, then select `geek/auto`. Replace the base URL with `https://<your-host>/v1` for a remote GeekCubo. The OpenCode 1.x format, Claude Code and the other tools are covered in [Connecting tools and SDKs](docs/integrations.md).
+Export `GEEKCUBO_API_KEY=sk-geek-...`, run `opencode`, and pick `geek/auto`. For a remote GeekCubo use `https://<your-host>/v1`.
 
-## How Auto routing works
+<p align="center">
+  <img src="docs/images/opencode-integration.png" alt="OpenCode using GeekCubo Auto to create calculator.py and test_calculator.py and run the unit tests" width="820">
+</p>
+
+Above, OpenCode works through GeekCubo Auto on a small coding task: it writes `calculator.py` and `test_calculator.py`, runs the tests and summarizes the result. Tool calling depends on the model GeekCubo routes to. Claude Code, Cursor and the OpenCode 1.x format are covered in [Connecting tools and SDKs](docs/integrations.md).
+
+## Automatic routing
+
+<p align="center">
+  <img src="docs/images/routing.png" alt="Routing page with strategy cards, Mundane, Hard and Fallback model pools, and the registered model table with capabilities, context and prices" width="820">
+</p>
 
 Send `model="auto"` (or a routing-profile id) and GeekCubo:
 
@@ -180,28 +214,127 @@ Send `model="auto"` (or a routing-profile id) and GeekCubo:
 4. drops models whose known **context window** is too small, and applies the key's allowlist and the profile's restrictions;
 5. **ranks** the rest with the selected strategy and tries them in order, up to the fallback limit.
 
-The chosen model is returned in `x-geek-resolved-model`. If nothing qualifies, the request fails with a 422 that names the filter that emptied the pool instead of guessing. **Routing → Test a routing decision** shows the same reasoning without sending anything upstream. Full details: [Routing](docs/routing.md).
+| Strategy | Ranks by |
+|---|---|
+| **Balanced** (default) | Quality score and blended price, equally weighted |
+| **Cheapest** | Lowest blended price |
+| **Quality First** | Highest quality score (Artificial Analysis or your manual scores) |
+| **Adaptive** | Observed success rate and latency from this installation's own log |
+| **Adaptive-Gated** | Sends simple requests to the *Mundane* pool and demanding ones (tools, images, long prompts) to the *Hard* pool |
+
+The chosen model is returned in `x-geek-resolved-model`. If nothing qualifies, the request fails with a 422 that names the filter that emptied the pool instead of guessing. **Routing profiles** are named Auto configurations (strategy, allowlist, price ceiling, fallback limit) that clients select by model id; a fallback can never escape its profile. **Test a routing decision** on the Routing page shows the reasoning without calling any model. Full details: [Routing](docs/routing.md).
+
+## Chat and attachments
+
+<p align="center">
+  <img src="docs/images/native-chat.png" alt="Dashboard chat with Auto model selection, an image question, a Python code answer and a web-search answer with sources" width="820">
+</p>
+
+The **Chat** tab talks to your deployed models through the same pipeline as SDK traffic, so Auto, profiles, caching and cost tracking behave identically. Pick **Auto (router picks)**, a profile or any model per conversation; each reply shows the model that answered, its tokens and cost. Replies stream, **Stop** ends the upstream request, and conversations live only in your local database with configurable retention. The header shows the context budget, so a trimmed history is never mistaken for a model failure.
+
+<details>
+<summary><b>Image and file attachments</b></summary>
+
+<p align="center">
+  <img src="docs/images/chat-vision.png" alt="Chat with an attached screenshot analysed by a vision-capable model" width="760">
+</p>
+
+Attach files with the paperclip, drag-and-drop or paste: images (sent to vision-capable models), PDF/DOCX/RTF, spreadsheets, text and code, archives (listed, never unpacked to disk), and video/audio (metadata; video frames need `ffmpeg`). Files are verified by content, stored under opaque names and served only to the administrator. Pinning a model without vision support rejects image sends instead of silently dropping the file. Limits: 8 files per message, 25 MB per file by default (`ATTACHMENT_MAX_MB`). See [Chat](docs/chat.md).
+
+</details>
+
+## Optional web search
+
+Chat can search the web before answering and cite the pages it used. **Search is off by default and entirely optional**: GeekCubo routes and chats normally without SearXNG, Brave or Tavily, and search credentials are stored separately from model-provider credentials. Configure everything in **Chat → ⚙ Chat settings → Web search**:
+
+- **Search mode:** `Off` (default) or `Manual (per message)`, which adds a search toggle to the composer. `Auto` is reserved and **not yet implemented**.
+- **Search backend:** SearXNG (URL), Brave Search API or Tavily (API key, stored encrypted and never shown again).
+- **Limits:** searches per conversation, results per search, pages fetched per search and a timeout; hard caps apply server-side.
+- **Test connection** runs one real query and reports the result count and latency without saving.
+
+A search that fails is reported as a failure in the composer, never presented as a successful search; citations are shown only for URLs the backend actually returned. `./install.sh` offers the same choices interactively.
+
+**1. Private SearXNG container (bundled).** From the repository directory, start the optional `searxng` service with the Compose `search` profile:
+
+```bash
+docker compose --profile search up -d     # start GeekCubo plus SearXNG
+docker compose --profile search down      # stop both; volumes are kept
+```
+
+SearXNG runs on the internal Compose network with no published port, so it is reachable **from the GeekCubo container** as `http://searxng:8080/` — not from your browser. Enter that URL as the SearXNG backend, select **Manual**, then **Test connection**. The installer generates `SEARXNG_SECRET` in `.env`; the image is pinned in `docker-compose.yml` and capped at 512 MB. A failing SearXNG never stops GeekCubo.
+
+**2. Existing SearXNG server.** Choose the SearXNG backend and enter your instance's base URL. It must be reachable from inside the GeekCubo container (`127.0.0.1` there means the container itself) and must have the `json` format enabled in its `settings.yml`; otherwise the test reports that SearXNG did not return JSON.
+
+**3. Brave Search** or **4. Tavily.** External APIs with no container: create a key in your own Brave Search API or Tavily account, choose the backend, paste the key and use **Test connection**. Usage is billed by that service under its terms.
+
+## Local AI Connect
+
+<p align="center">
+  <img src="docs/images/local-ai-integration.png" alt="Local AI page with routing behaviour switches, machines, enrollment codes and the connector install command" width="820">
+</p>
+
+Bring models running on your own hardware (Ollama, LM Studio, vLLM, llama.cpp or any OpenAI-compatible server) into the same catalog and routing. A small connector dials **out** to GeekCubo over WebSocket, so no inbound port, tunnel or VPN is needed:
+
+```bash
+pip install .     # on the model host (Python 3.11+), from a checkout of this repository
+geekcubo-connector enroll --server https://<your-host> --code lcenr-...
+geekcubo-connector run
+```
+
+Enrollment codes are single-use and expire after 30 minutes; a machine gets nothing until you approve it. Local models appear as `local/<machine>/<model>`, can be pinned or included in Auto, and can be configured never to fall back to the cloud. **Tool calls are not returned through the connector**, so Auto never sends tool-using requests to local models. See [Local AI Connect](docs/local-ai-connect.md).
+
+## Analytics and cost tracking
+
+<p align="center">
+  <img src="docs/images/analytics.png" alt="Analytics page with error, Auto, fallback and escalation rates, routing decisions, latency by provider and recent requests with tokens and latency" width="560">
+</p>
+
+**Analytics** is computed from the local request log; no telemetry leaves your server. It shows error, Auto, fallback and escalation rates, how Auto requests were classified, the top models served, p50/p99 latency per provider, and every recent request with its model, routing decision, tokens, latency and status. Costs use confirmed prices only; requests with an unknown price are counted as such, never as free. An optional baseline comparison reports what the same traffic would have cost on one model at its list price. See [API endpoints and features](docs/api.md).
+
+## Security and deployment
+
+- **Loopback by default.** Compose publishes the dashboard on `127.0.0.1:8787` only; the administrator login is not meant to face the internet directly. For remote use, open an SSH tunnel (`ssh -L 8787:127.0.0.1:8787 <user>@<server>`) or put a TLS reverse proxy in front, set `TRUST_PROXY_HEADERS=true` and set `PUBLIC_BASE_URL` to your own address (for example `https://api.example.com`). See [DEPLOYMENT.md](DEPLOYMENT.md).
+- **Generated secrets.** On first start GeekCubo creates `CREDENTIAL_ENCRYPTION_KEY` and `API_KEY_PEPPER` in `.geekcubo-secrets` (mode `0600`) next to the database. Without them stored provider keys cannot be decrypted.
+- **Data and backups.** Everything lives in the `geekcubo-data` volume (`/data`): the database, attachments and the secrets file. Back it up with the service stopped (`docker compose cp api:/data ./geekcubo-data-backup`). Updates and `./install.sh` keep the volume; **never run `docker compose down -v`**, which deletes it.
+- **Credentials.** `sk-geek-*` keys are stored hash-only, provider keys encrypted; dashboard sessions are HttpOnly, `SameSite=Lax`, `Secure` over HTTPS and CSRF-protected. `sk-geek-*` keys cannot open the dashboard, and a dashboard session cannot call the inference API.
+
+<details>
+<summary><b>Updating, running without Compose, and the encryption key</b></summary>
+
+Update with `git pull`, then `docker compose build api && docker compose up -d api` after a backup; startup migrations add what the release needs. Without Compose, build the image and run it with `-p 127.0.0.1:8787:8000 -v geekcubo-data:/data` (see the appendix in [DEPLOYMENT.md](DEPLOYMENT.md)). Rotating `CREDENTIAL_ENCRYPTION_KEY` is a controlled, documented procedure: [Security → Encryption at rest](docs/security.md#encryption-at-rest).
+
+</details>
 
 ## Limitations
 
 - **Single workspace, single process.** No multi-tenancy, RBAC or SSO, and no multi-worker or multi-replica deployment ([scope](docs/architecture.md#scope-what-geekcubo-deliberately-is-not)).
-- **Local AI Connect does not return tool calls**, so Auto never routes requests that need tools to local models.
-- **Chat web search** is manual per message; the automatic mode is reserved and not implemented. Audio attachments are passed as metadata only.
-- **Cursor** works for chat models only; Cursor's own Tab completion and background agents keep using Cursor's models.
-- Generated client configurations follow each tool's documented format. The OpenCode configs were verified with OpenCode 2.2.6 for text generation; agentic tool calling also depends on the model GeekCubo routes to.
+- **Local AI Connect does not return tool calls**, so tool-using requests never route to local models.
+- **Web search** is manual per message; the automatic mode is reserved and not implemented. Audio attachments are passed as metadata only; there is no transcription.
+- **Cursor** works for chat models only; Cursor's own Tab completion and background agents keep using Cursor's models. Anthropic-hosted extras outside the Messages API are not available.
+- **Inference endpoints** are chat completions, Anthropic Messages (with token counting), Gemini `generateContent` and model listing; embeddings and image generation are not proxied.
+- Generated client configurations follow each tool's documented format. The OpenCode configs were verified with OpenCode 2.2.6 for text generation; agentic tool calling also depends on the routed model.
 
-## Documentation
+## Troubleshooting and documentation
 
-| | |
+<details>
+<summary><b>Common problems</b></summary>
+
+- **Installer or container fails:** `docker compose ps` and `docker compose logs --tail=100 api`, then rerun `./install.sh` (it keeps your data).
+- **Request fails with 422:** no model passed Auto's filters. Read `x-geek-routing-diagnosis`, or use **Routing → Test a routing decision**; common causes are no provider key, no confirmed price, or a required capability marked Unknown.
+- **401 from the API:** the client must send an `sk-geek-*` key, not a provider key or the dashboard password.
+- **Cannot sign in after an HTTPS proxy change:** set `TRUST_PROXY_HEADERS=true` so cookies get the `Secure` flag.
+- **Web search test fails:** check the URL is reachable from the container and SearXNG has the `json` format enabled, or re-enter the Brave/Tavily key.
+
+</details>
+
+| Guide | Contents |
 |---|---|
 | [Security & API keys](docs/security.md) | Administrator account, sessions, keys, encryption, backups, troubleshooting |
 | [Routing](docs/routing.md) | Auto, strategies, policies, profiles, fallback |
 | [Model Intelligence](docs/model-intelligence.md) | Metadata sources, pricing, capabilities |
 | [Connecting tools and SDKs](docs/integrations.md) | Connect a tool, OpenCode, Claude Code, native protocols |
-| [Local AI Connect](docs/local-ai-connect.md) | Local models through an outbound connector |
-| [Chat](docs/chat.md) | Dashboard chat, web search, attachments |
-| [API endpoints](docs/api.md) | Endpoints, model catalog, prompt cache, savings |
-| [Architecture & development](docs/architecture.md) | Source layout, tests, roadmap |
+| [Local AI Connect](docs/local-ai-connect.md) · [Chat](docs/chat.md) | Local models; dashboard chat, web search, attachments |
+| [API endpoints](docs/api.md) · [Architecture](docs/architecture.md) | Endpoints, catalog, cache; source layout, tests, roadmap |
 | [Deployment](DEPLOYMENT.md) | VPS, reverse proxy, backup, upgrades |
 
 ## Support GeekCubo
