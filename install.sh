@@ -434,7 +434,22 @@ nginx_check_conflict() {
   fi
 }
 
+# Request-body ceiling for the generated vhost. nginx defaults to 1 MB, which
+# would reject chat attachments (ATTACHMENT_MAX_MB, default 25, hard ceiling
+# 200) with 413 before they reach the app. Derive the limit from the
+# configured attachment size plus multipart/form overhead headroom.
+nginx_body_limit_mb() {
+  local mb
+  mb="$(read_env_var ATTACHMENT_MAX_MB)"
+  [[ "$mb" =~ ^[0-9]+$ ]] || mb=25
+  (( mb < 1 )) && mb=1
+  (( mb > 200 )) && mb=200
+  printf '%s' "$(( mb + 7 ))"
+}
+
 nginx_write_vhost() {
+  local body_limit_mb
+  body_limit_mb="$(nginx_body_limit_mb)"
   mkdir -p deploy/nginx
   cat >deploy/nginx/geekcubo.conf <<EOF
 # Managed by the GeekCubo installer. Safe to regenerate by rerunning ./install.sh.
@@ -453,6 +468,10 @@ map \$http_upgrade \$geekcubo_connection_upgrade {
 server {
     listen 80;
     server_name ${MODE_HOSTNAME};
+
+    # Chat attachments are limited by ATTACHMENT_MAX_MB in the app; this keeps
+    # the proxy from rejecting them first (nginx's default is 1 MB).
+    client_max_body_size ${body_limit_mb}m;
 
     location / {
         proxy_pass http://127.0.0.1:8787;

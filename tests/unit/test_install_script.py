@@ -569,6 +569,25 @@ def test_mode3_generates_vhost_and_installs_with_debian_layout(tmp_path):
     assert "map $http_upgrade $geekcubo_connection_upgrade" in vhost
     assert "proxy_set_header Connection $geekcubo_connection_upgrade;" in vhost
     assert "$connection_upgrade;" not in vhost.replace("$geekcubo_connection_upgrade;", "")
+    # Default 25 MB attachments plus multipart headroom; nginx's 1 MB default
+    # would reject uploads with 413 before they reach the app.
+    assert "client_max_body_size 32m;" in vhost
+
+
+def test_mode3_vhost_body_limit_follows_attachment_max_mb(tmp_path):
+    root = _install_root(tmp_path)
+    etc = tmp_path / "etcnginx"
+    (etc / "sites-available").mkdir(parents=True)
+    (etc / "sites-enabled").mkdir(parents=True)
+    result, _ = _run(
+        tmp_path,
+        root,
+        extra_env={"FAKE_NGINX_ETC": str(etc), "ATTACHMENT_MAX_MB": "100"},
+        args=["--mode", "3", "--hostname", "ai.example.com", "--yes"],
+    )
+    assert result.returncode == 0, result.stderr
+    vhost = (root / "deploy" / "nginx" / "geekcubo.conf").read_text(encoding="utf-8")
+    assert "client_max_body_size 107m;" in vhost
 
 
 def test_mode3_refuses_conflicting_server_name(tmp_path):
