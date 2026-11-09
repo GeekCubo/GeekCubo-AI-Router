@@ -1,0 +1,23 @@
+use_default_settings: true
+
+general:
+  instance_name: GeekCubo Search
+  debug: false
+
+server:
+  port: 8080
+  bind_address: "0.0.0.0"
+  limiter: false
+  public_instance: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  formats: [html, json]
+
+outgoing:
+  request_timeout: 10
+  useragent_suffix: "GeekCubo/1.0"
+
+ui:
+  static_use_hash: true

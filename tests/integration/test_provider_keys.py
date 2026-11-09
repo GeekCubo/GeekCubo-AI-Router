@@ -1,0 +1,784 @@
+"""Provider keys CRUD — set/list/delete with at-rest encryption."""
+
+import pytest
+
+from tests.authkit import SignedInClient
+
+
+@pytest.fixture
+async def authed_client(tmp_sqlite_url, monkeypatch, isolated_env):
+    """A booted lite app + a TestClient with the seeded API key in its headers.
+
+    `isolated_env` strips developer-set provider keys from the env so the
+    "list returns empty" assertion isn't drowned out by .env-sourced rows
+    (the list endpoint surfaces both DB and env-configured providers as
+    of the env-key-visibility fix).
+    """
+    monkeypatch.setenv("DATABASE_URL", tmp_sqlite_url)
+
+    from app import config as cfg
+
+    cfg.get_settings.cache_clear()
+
+    from packages.db.engine import build_engine
+    from packages.db.models.base import Base
+
+    engine = build_engine(tmp_sqlite_url)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from packages.db import session as session_mod
+
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    session_mod._session_factory = factory
+
+    from app.seed import seed_initial_state
+
+    async with factory() as s:
+        seed = await seed_initial_state(s)
+
+    from app.main import create_app
+
+    app = create_app()
+
+    from httpx import ASGITransport
+
+    async with SignedInClient(
+transport=ASGITransport(app=app),
+        base_url="http://t",
+        headers={"Authorization": f"Bearer {seed.api_key}"},
+    ) as c:
+        yield c
+
+    await engine.dispose()
+    session_mod._session_factory = None
+
+
+async def test_list_returns_empty_initially(authed_client):
+    r = await authed_client.get("/v1/providers")
+    assert r.status_code == 200
+    assert r.json() == {"providers": []}
+
+
+async def test_put_empty_or_whitespace_key_is_rejected(authed_client):
+    """Empty / whitespace-only values stay 422; format warnings are a
+    separate, softer path for non-empty junk."""
+    for value in ("", "   ", "\n\t"):
+        r = await authed_client.put(
+            "/v1/providers/openai", json={"api_key": value}
+        )
+        assert r.status_code == 422, r.text
+        msg = (
+            r.json().get("error", {}).get("message")
+            or r.json().get("detail")
+            or ""
+        )
+        assert "empty" in str(msg).lower()
+
+
+async def test_put_obviously_invalid_key_warns_but_still_stores(authed_client):
+    """Issue #142: `"abc"` must not 200 silently. Warn at PUT, still
+    persist (BYOK — warning, not rejection) so unusual keys aren't blocked."""
+    r = await authed_client.put(
+        "/v1/providers/openai",
+        json={"api_key": "abc"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["provider"] == "openai"
+    assert body["is_enabled"] is True
+    assert body["source"] == "db"
+    warnings = body.get("warnings") or []
+    assert len(warnings) == 1
+    assert "sk-" in warnings[0]
+    assert "OpenAI" in warnings[0]
+    assert "Verify this is correct" in warnings[0]
+
+    listing = await authed_client.get("/v1/providers")
+    rows = listing.json()["providers"]
+    assert len(rows) == 1
+    assert rows[0]["provider"] == "openai"
+    assert "warnings" not in rows[0]
+
+
+async def test_put_matching_prefix_has_no_warnings(authed_client):
+    r = await authed_client.put(
+        "/v1/providers/anthropic",
+        json={"api_key": "sk-ant-api03-real-looking-key"},
+    )
+    assert r.status_code == 200, r.text
+    assert "warnings" not in r.json()
+
+
+async def test_put_dashboard_placeholder_is_no_change_without_warning(
+    authed_client, tmp_sqlite_url,
+):
+    """Dashboard save-without-retype sends the literal [REDACTED] placeholder.
+    It must not warn (wrong prefix) or overwrite the stored credential."""
+    from app.routes.providers import DASHBOARD_KEY_PLACEHOLDER
+
+    real_key = "sk-proj-real-credential-value-abcdefgh"
+    first = await authed_client.put(
+        "/v1/providers/openai",
+        json={"api_key": real_key},
+    )
+    assert first.status_code == 200, first.text
+    expected_prefix = first.json()["key_prefix"]
+
+    second = await authed_client.put(
+        "/v1/providers/openai",
+        json={"api_key": DASHBOARD_KEY_PLACEHOLDER},
+    )
+    assert second.status_code == 200, second.text
+    body = second.json()
+    assert "warnings" not in body
+    assert body["key_prefix"] == expected_prefix
+    assert body["decryptable"] is True
+
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from packages.auth.encryption import decrypt_credential
+    from packages.db.engine import build_engine
+    from packages.db.models.provider_key import ProviderKey
+
+    engine = build_engine(tmp_sqlite_url)
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as s:
+        row = (
+            await s.execute(
+                select(ProviderKey).where(ProviderKey.provider == "openai")
+            )
+        ).scalar_one()
+    await engine.dispose()
+
+    assert decrypt_credential(row.encrypted_key) == real_key
+    assert row.key_prefix == expected_prefix
+
+
+async def test_put_dashboard_placeholder_does_not_overwrite_undecryptable_row(
+    authed_client, tmp_sqlite_url,
+):
+    """Save-without-retype must not replace a rotated ciphertext. The
+    no-change PUT reports decryptable=true; GET still flags the stored row."""
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.routes.providers import DASHBOARD_KEY_PLACEHOLDER
+    from packages.db.engine import build_engine
+    from packages.db.models.provider_key import ProviderKey
+
+    garbage = b"this-is-not-a-valid-aesgcm-ciphertext"
+    engine = build_engine(tmp_sqlite_url)
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as s:
+        s.add(ProviderKey(
+            provider="openai",
+            encrypted_key=garbage,
+            key_prefix="sk-broken...xxxx",
+            is_enabled=True,
+        ))
+        await s.commit()
+    await engine.dispose()
+
+    r = await authed_client.put(
+        "/v1/providers/openai",
+        json={"api_key": DASHBOARD_KEY_PLACEHOLDER},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["decryptable"] is True
+    assert body["key_prefix"] == "sk-broken...xxxx"
+    assert "warnings" not in body
+
+    listing = await authed_client.get("/v1/providers")
+    db_rows = [
+        p for p in listing.json()["providers"]
+        if p["provider"] == "openai" and p["source"] == "db"
+    ]
+    assert len(db_rows) == 1
+    assert db_rows[0]["decryptable"] is False
+
+    engine = build_engine(tmp_sqlite_url)
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as s:
+        row = (
+            await s.execute(
+                select(ProviderKey).where(ProviderKey.provider == "openai")
+            )
+        ).scalar_one()
+    await engine.dispose()
+    assert bytes(row.encrypted_key) == garbage
+
+
+async def test_put_dashboard_placeholder_without_stored_key_is_rejected(
+    authed_client,
+):
+    from app.routes.providers import DASHBOARD_KEY_PLACEHOLDER
+
+    r = await authed_client.put(
+        "/v1/providers/openai",
+        json={"api_key": DASHBOARD_KEY_PLACEHOLDER},
+    )
+    assert r.status_code == 422, r.text
+    assert "placeholder" in r.text.lower()
+
+
+async def test_put_strips_whitespace_stores_stripped_key_without_warning(
+    authed_client, tmp_sqlite_url,
+):
+    """Leading/trailing whitespace is stripped once before encrypt, mask,
+    format-check, and storage. A matching prefix with padding must not
+    warn, and the stored/masked value is the stripped key."""
+    padded = "  sk-ant-api03-real-looking-key  "
+    stripped = padded.strip()
+    r = await authed_client.put(
+        "/v1/providers/anthropic",
+        json={"api_key": padded},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "warnings" not in body
+    expected_prefix = stripped[:8] + "..." + stripped[-4:]
+    assert body["key_prefix"] == expected_prefix
+
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from packages.auth.encryption import decrypt_credential
+    from packages.db.engine import build_engine
+    from packages.db.models.provider_key import ProviderKey
+
+    engine = build_engine(tmp_sqlite_url)
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as s:
+        rows = (await s.execute(select(ProviderKey))).scalars().all()
+    await engine.dispose()
+
+    assert len(rows) == 1
+    assert decrypt_credential(rows[0].encrypted_key) == stripped
+    assert rows[0].key_prefix == expected_prefix
+
+
+async def test_put_unknown_provider_does_not_warn(authed_client):
+    """Custom / unknown provider ids are BYOK — no format guess."""
+    r = await authed_client.put(
+        "/v1/providers/my-proxy",
+        json={"api_key": "abc"},
+    )
+    assert r.status_code == 200, r.text
+    assert "warnings" not in r.json()
+
+
+async def test_set_provider_key_then_list(authed_client):
+    r = await authed_client.put(
+        "/v1/providers/openai",
+        json={"api_key": "sk-test-12345"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["provider"] == "openai"
+    assert r.json()["key_prefix"].startswith("sk-test-")
+    # Plaintext must NOT round-trip through the response
+    assert "sk-test-12345" not in r.text
+
+    listing = await authed_client.get("/v1/providers")
+    assert listing.status_code == 200
+    rows = listing.json()["providers"]
+    assert len(rows) == 1
+    assert rows[0]["provider"] == "openai"
+    assert rows[0]["is_enabled"] is True
+    assert rows[0]["decryptable"] is True
+    assert "encrypted_key" not in rows[0]
+    assert "api_key" not in rows[0]
+
+
+async def test_delete_provider_key(authed_client):
+    await authed_client.put("/v1/providers/openai", json={"api_key": "sk-test"})
+
+    r = await authed_client.delete("/v1/providers/openai")
+    assert r.status_code == 204
+
+    listing = await authed_client.get("/v1/providers")
+    assert listing.json()["providers"] == []
+
+
+async def test_delete_is_hard_delete_no_ghost_rows_left_in_db(
+    authed_client, tmp_sqlite_url,
+):
+    """Pre-PR symptom: DELETE was a soft-delete (`is_deleted=1`). The
+    next PUT for the same provider would query `is_deleted=0`, miss
+    the tombstone, and INSERT a new row. After N PUT/DELETE cycles
+    the table held N tombstones for ONE provider — single-tenant
+    invariant ('1 row per provider') silently violated.
+
+    Hard-delete fixes the leak: the table never grows past the actual
+    in-use rows."""
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from packages.db.engine import build_engine
+    from packages.db.models.provider_key import ProviderKey
+
+    # Five PUT/DELETE cycles. Pre-fix this would leave 5 tombstones.
+    for i in range(5):
+        await authed_client.put(
+            "/v1/providers/openai",
+            json={"api_key": f"sk-cycle-{i}"},
+        )
+        await authed_client.delete("/v1/providers/openai")
+
+    engine = build_engine(tmp_sqlite_url)
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as s:
+        all_rows = (await s.execute(select(ProviderKey))).scalars().all()
+        openai_rows = [r for r in all_rows if r.provider == "openai"]
+    await engine.dispose()
+
+    assert len(openai_rows) == 0, (
+        f"hard-delete must leave zero rows for the provider, got: "
+        f"{[(r.provider, r.is_deleted) for r in openai_rows]}"
+    )
+
+
+async def test_put_after_legacy_soft_delete_ghost_wipes_it(
+    authed_client, tmp_sqlite_url,
+):
+    """Migration aid: dev DBs created before this PR may carry
+    `is_deleted=1` ghost rows. The PUT path must wipe them
+    opportunistically — otherwise the table accumulates ghost rows
+    on every set-key from the dashboard until the operator manually
+    DELETEs from SQL."""
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from packages.db.engine import build_engine
+    from packages.db.models.provider_key import ProviderKey
+
+    # Plant a legacy soft-deleted ghost row directly via ORM (simulates
+    # what an old dev DB looks like).
+    engine = build_engine(tmp_sqlite_url)
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as s:
+        s.add(ProviderKey(
+            provider="openai",
+            encrypted_key=b"old-encrypted-blob",
+            key_prefix="sk-ghost...old",
+            is_enabled=False,
+            is_deleted=1,
+        ))
+        await s.commit()
+
+    # Operator sets a new key from the dashboard.
+    r = await authed_client.put(
+        "/v1/providers/openai",
+        json={"api_key": "sk-new-key-after-ghost"},
+    )
+    assert r.status_code == 200
+
+    # Ghost row should be gone — table holds exactly one openai row,
+    # the freshly-set one.
+    async with Session() as s:
+        rows = (
+            await s.execute(
+                select(ProviderKey).where(ProviderKey.provider == "openai")
+            )
+        ).scalars().all()
+    await engine.dispose()
+
+    assert len(rows) == 1, (
+        f"PUT must wipe legacy ghost rows, got {len(rows)} rows: "
+        f"{[(r.key_prefix, r.is_deleted) for r in rows]}"
+    )
+    assert rows[0].is_deleted == 0
+    assert rows[0].key_prefix.startswith("sk-new-")
+
+
+async def test_overwrite_existing_key(authed_client):
+    await authed_client.put("/v1/providers/openai", json={"api_key": "sk-old"})
+    r = await authed_client.put("/v1/providers/openai", json={"api_key": "sk-new"})
+    assert r.status_code == 200
+
+    listing = await authed_client.get("/v1/providers")
+    assert len(listing.json()["providers"]) == 1
+
+
+async def test_provider_key_is_encrypted_at_rest(authed_client, tmp_sqlite_url):
+    await authed_client.put("/v1/providers/openai", json={"api_key": "sk-secret-99"})
+
+    # Read the raw row back through ORM and verify ciphertext != plaintext.
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from packages.auth.encryption import decrypt_credential
+    from packages.db.engine import build_engine
+    from packages.db.models.provider_key import ProviderKey
+
+    engine = build_engine(tmp_sqlite_url)
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as s:
+        rows = (await s.execute(select(ProviderKey))).scalars().all()
+
+    assert len(rows) == 1
+    blob = rows[0].encrypted_key
+    assert isinstance(blob, bytes)
+    assert b"sk-secret-99" not in blob
+    assert decrypt_credential(blob) == "sk-secret-99"
+    await engine.dispose()
+
+
+# ── env-sourced provider visibility ───────────────────────────────────
+
+
+async def test_list_surfaces_env_provider_keys_with_source_marker(
+    authed_client, monkeypatch,
+):
+    """Operator who configured `OPENAI_API_KEY` in `.env` (the documented
+    install path) must see "openai" in the dashboard providers list. Before
+    this fix, the page showed empty even though chats were succeeding via
+    the env key — confusing as hell."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env-openai-12345")
+    from app import config as cfg
+    cfg.get_settings.cache_clear()
+
+    r = await authed_client.get("/v1/providers")
+    assert r.status_code == 200
+    rows = r.json()["providers"]
+    openai_row = next((p for p in rows if p["provider"] == "openai"), None)
+    assert openai_row is not None, (
+        f"env-set OPENAI_API_KEY must appear in the list, got: {rows}"
+    )
+    assert openai_row["source"] == "env"
+    assert openai_row["is_enabled"] is True
+    assert openai_row["decryptable"] is True
+    # Plaintext must NOT round-trip through the response
+    assert "sk-env-openai-12345" not in r.text
+    # Mask preserves first/last hint so operator can identify which key
+    assert openai_row["key_prefix"].startswith("sk-env-o")
+
+
+async def test_db_key_takes_precedence_over_env_in_listing(
+    authed_client, monkeypatch,
+):
+    """When the same provider has both an env var AND a DB row, the list
+    should show the DB version (matches runtime resolver precedence at
+    router_cache.py:58 `db_provider_keys.get(provider) or env_keys.get`).
+    Showing both would suggest two simultaneous configurations exist; in
+    reality only the DB one is used."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env-version")
+    from app import config as cfg
+    cfg.get_settings.cache_clear()
+
+    await authed_client.put(
+        "/v1/providers/openai",
+        json={"api_key": "sk-db-version-overrides"},
+    )
+
+    r = await authed_client.get("/v1/providers")
+    rows = r.json()["providers"]
+    openai_rows = [p for p in rows if p["provider"] == "openai"]
+    assert len(openai_rows) == 1, (
+        f"db row must override env row, got duplicates: {openai_rows}"
+    )
+    assert openai_rows[0]["source"] == "db"
+    assert openai_rows[0]["key_prefix"].startswith("sk-db-ve")
+
+
+async def test_env_only_listing_when_no_db_rows(
+    authed_client, monkeypatch,
+):
+    """Pure-env install (no dashboard PUTs ever): list still surfaces all
+    configured providers."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env-1")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-env-2")
+    from app import config as cfg
+    cfg.get_settings.cache_clear()
+
+    r = await authed_client.get("/v1/providers")
+    providers = {p["provider"]: p for p in r.json()["providers"]}
+    assert "openai" in providers and providers["openai"]["source"] == "env"
+    assert "anthropic" in providers and providers["anthropic"]["source"] == "env"
+
+
+async def test_delete_db_row_falls_back_to_env_value(
+    authed_client, monkeypatch,
+):
+    """Operator workflow: env has a key, operator overrides via dashboard
+    PUT, then later wants the env value back — DELETE the DB row and
+    the listing should re-emerge with the env entry. Demonstrates the
+    DB > env precedence layering works in both directions."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env-baseline")
+    from app import config as cfg
+    cfg.get_settings.cache_clear()
+
+    # Step 1: env-only listing
+    r = await authed_client.get("/v1/providers")
+    rows = [p for p in r.json()["providers"] if p["provider"] == "openai"]
+    assert len(rows) == 1
+    assert rows[0]["source"] == "env"
+    env_prefix = rows[0]["key_prefix"]
+
+    # Step 2: operator PUTs a custom key — DB now wins
+    await authed_client.put(
+        "/v1/providers/openai",
+        json={"api_key": "sk-db-custom-overrides-env"},
+    )
+    r = await authed_client.get("/v1/providers")
+    rows = [p for p in r.json()["providers"] if p["provider"] == "openai"]
+    assert len(rows) == 1
+    assert rows[0]["source"] == "db"
+    assert rows[0]["key_prefix"] != env_prefix
+
+    # Step 3: operator deletes the DB row — env value re-emerges
+    r = await authed_client.delete("/v1/providers/openai")
+    assert r.status_code == 204
+
+    r = await authed_client.get("/v1/providers")
+    rows = [p for p in r.json()["providers"] if p["provider"] == "openai"]
+    assert len(rows) == 1
+    assert rows[0]["source"] == "env"
+    assert rows[0]["key_prefix"] == env_prefix
+
+
+async def test_delete_env_only_provider_returns_409_with_guidance(
+    authed_client, monkeypatch,
+):
+    """Trying to DELETE a provider that exists ONLY in env (no DB row)
+    must surface a 409 with actionable guidance — not a silent 204
+    that misleads the operator into thinking the key is gone (the
+    next page load would show it back, because env didn't change)."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env-only")
+    from app import config as cfg
+    cfg.get_settings.cache_clear()
+
+    r = await authed_client.delete("/v1/providers/openai")
+    assert r.status_code == 409
+    # The app wraps HTTPException detail in `{error: {message, type}}` —
+    # see middleware/error envelope.
+    body = r.json()
+    msg = body.get("error", {}).get("message") or body.get("detail") or ""
+    assert "OPENAI_API_KEY" in msg, f"missing env var name in: {msg!r}"
+    assert ".env" in msg, f"missing .env hint in: {msg!r}"
+
+
+async def test_delete_unknown_provider_returns_404(authed_client):
+    """No DB row, no env entry → straight 404 (not 409, the env-guidance
+    path doesn't apply here)."""
+    r = await authed_client.delete("/v1/providers/totally-fake-provider")
+    assert r.status_code == 404
+
+
+async def test_disabled_db_row_does_not_suppress_env_entry(
+    authed_client, tmp_sqlite_url, monkeypatch,
+):
+    """Codex-flagged: the runtime resolver (`router_cache.build_deployments`)
+    only honors a DB row when both `is_enabled=True` AND the ciphertext
+    decrypts. If a row is disabled (or corrupt after a
+    CREDENTIAL_ENCRYPTION_KEY rotation), runtime falls back to env.
+    The list endpoint MUST NOT suppress the env entry on the basis of a
+    non-usable DB row — otherwise the dashboard would label the source
+    as 'db' while the env key is what's actually authenticating requests."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env-actually-active")
+    from app import config as cfg
+    cfg.get_settings.cache_clear()
+
+    # Plant a DISABLED DB row directly via ORM. PUT route always sets
+    # is_enabled=True, so we go around it.
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from packages.auth.encryption import encrypt_credential
+    from packages.db.engine import build_engine
+    from packages.db.models.provider_key import ProviderKey
+
+    engine = build_engine(tmp_sqlite_url)
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as s:
+        s.add(ProviderKey(
+            provider="openai",
+            encrypted_key=encrypt_credential("sk-db-disabled-shouldnt-be-used"),
+            key_prefix="sk-db-dis...used",
+            is_enabled=False,   # ← disabled, runtime will skip
+        ))
+        await s.commit()
+    await engine.dispose()
+
+    r = await authed_client.get("/v1/providers")
+    rows = [p for p in r.json()["providers"] if p["provider"] == "openai"]
+    sources = sorted(p["source"] for p in rows)
+
+    # The disabled DB row IS shown (operators need to see + fix it),
+    # AND the env entry is ALSO shown so the operator sees what's
+    # actually serving traffic.
+    assert "env" in sources, (
+        f"env entry must remain visible when DB row is unusable, got: {rows}"
+    )
+    db_row = next(p for p in rows if p["source"] == "db")
+    env_row = next(p for p in rows if p["source"] == "env")
+    assert db_row["is_enabled"] is False
+    assert env_row["is_enabled"] is True
+
+
+async def test_undecryptable_db_row_does_not_suppress_env_entry(
+    authed_client, tmp_sqlite_url, monkeypatch,
+):
+    """Same contract as above but for the post-key-rotation case: a row
+    whose ciphertext can't decrypt under the current
+    CREDENTIAL_ENCRYPTION_KEY. The runtime treats this as 'no DB key
+    here' and falls back to env; the list endpoint must do the same."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env-actually-active")
+    from app import config as cfg
+    cfg.get_settings.cache_clear()
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from packages.db.engine import build_engine
+    from packages.db.models.provider_key import ProviderKey
+
+    engine = build_engine(tmp_sqlite_url)
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as s:
+        # Insert garbage bytes — won't decrypt under any AES-GCM key.
+        s.add(ProviderKey(
+            provider="openai",
+            encrypted_key=b"this-is-not-a-valid-aesgcm-ciphertext",
+            key_prefix="sk-broken...xxxx",
+            is_enabled=True,   # enabled, but decrypt will fail
+        ))
+        await s.commit()
+    await engine.dispose()
+
+    r = await authed_client.get("/v1/providers")
+    rows = [p for p in r.json()["providers"] if p["provider"] == "openai"]
+    sources = sorted(p["source"] for p in rows)
+
+    assert "env" in sources, (
+        f"env entry must remain visible when DB ciphertext is corrupt, got: {rows}"
+    )
+    db_row = next(p for p in rows if p["source"] == "db")
+    assert db_row["is_enabled"] is True
+    assert db_row["decryptable"] is False, (
+        "rotated/corrupt ciphertext must be flagged so the dashboard does "
+        "not render a green Enabled pill for an unusable key"
+    )
+
+
+async def test_list_flags_undecryptable_db_row_without_env_fallback(
+    authed_client, tmp_sqlite_url,
+):
+    """Issue #137: after a key rotation the dashboard still showed
+    is_enabled=true with no signal. Listing must set decryptable=false
+    even when there is no env fallback to surface."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from packages.db.engine import build_engine
+    from packages.db.models.provider_key import ProviderKey
+
+    engine = build_engine(tmp_sqlite_url)
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as s:
+        s.add(ProviderKey(
+            provider="openai",
+            encrypted_key=b"this-is-not-a-valid-aesgcm-ciphertext",
+            key_prefix="sk-broken...xxxx",
+            is_enabled=True,
+        ))
+        await s.commit()
+    await engine.dispose()
+
+    r = await authed_client.get("/v1/providers")
+    assert r.status_code == 200
+    rows = r.json()["providers"]
+    assert len(rows) == 1
+    assert rows[0]["provider"] == "openai"
+    assert rows[0]["source"] == "db"
+    assert rows[0]["is_enabled"] is True
+    assert rows[0]["decryptable"] is False
+
+
+# ── __custom__ sentinel guard ──────────────────────────────────────────────
+# A pre-Phase-1 dashboard bundle had no custom-provider branch, so selecting
+# "OpenAI Format – Others" fell through and stored the operator's key as a
+# provider_keys row literally named "__custom__". That row has no base URL and
+# matches no catalog entry, so routing can never use it. The API now refuses
+# to create one, from any client, while still allowing DELETE for cleanup.
+
+
+async def test_put_rejects_custom_sentinel_provider(authed_client):
+    r = await authed_client.put(
+        "/v1/providers/__custom__", json={"api_key": "sk-apixo-should-not-store"}
+    )
+    assert r.status_code == 422
+    body = r.json()
+    assert "__custom__" in body["error"]["message"]
+    assert "/v1/custom-providers" in body["error"]["message"], (
+        "the error must tell the operator where the real endpoint is"
+    )
+
+    listing = await authed_client.get("/v1/providers")
+    assert listing.json()["providers"] == []
+
+
+async def test_put_rejects_any_dunder_sentinel_name(authed_client):
+    for name in ("__custom__", "__anything__", "__"):
+        r = await authed_client.put(
+            f"/v1/providers/{name}", json={"api_key": "sk-nope"}
+        )
+        assert r.status_code == 422, name
+
+
+async def test_arbitrary_non_sentinel_provider_names_still_work(authed_client):
+    """BYOK allows any provider id — the guard must not become an allowlist."""
+    r = await authed_client.put(
+        "/v1/providers/my-proxy", json={"api_key": "sk-my-own-proxy-key-1234"}
+    )
+    assert r.status_code == 200
+    assert r.json()["provider"] == "my-proxy"
+
+
+async def test_legacy_custom_row_is_listed_and_can_be_deleted(authed_client):
+    """An existing __custom__ row must stay visible (so the dashboard can warn)
+    and be removable by an explicit operator action — never silently dropped."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.config import get_settings
+    from packages.auth.encryption import encrypt_credential
+    from packages.db.engine import build_engine
+    from packages.db.models.provider_key import ProviderKey
+
+    engine = build_engine(get_settings().database_url)
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as s:
+        s.add(ProviderKey(
+            provider="__custom__",
+            encrypted_key=encrypt_credential("sk-apixo-legacy-key-9999"),
+            key_prefix="sk-apixo...9999",
+            is_enabled=True,
+        ))
+        await s.commit()
+    await engine.dispose()
+
+    listing = await authed_client.get("/v1/providers")
+    rows = listing.json()["providers"]
+    assert [p["provider"] for p in rows] == ["__custom__"]
+    assert rows[0]["key_prefix"] == "sk-apixo...9999"
+
+    # The raw key is never exposed.
+    assert "sk-apixo-legacy-key-9999" not in listing.text
+
+    # Explicit cleanup is allowed (DELETE is not blocked by the write guard).
+    d = await authed_client.delete("/v1/providers/__custom__")
+    assert d.status_code == 204
+    after = await authed_client.get("/v1/providers")
+    assert after.json()["providers"] == []
+
+
+async def test_custom_provider_slug_cannot_be_the_sentinel(authed_client):
+    """A display name that slugifies to a reserved/sentinel value is rejected
+    at creation, so the two namespaces can never collide."""
+    r = await authed_client.post("/v1/custom-providers", json={
+        "display_name": "__custom__",
+        "base_url": "https://api.apixo.example/v1",
+        "api_key": "sk-apixo-test",
+    })
+    assert r.status_code == 422

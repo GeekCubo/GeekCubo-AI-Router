@@ -1,0 +1,36 @@
+{
+  "$comment": "Drop into ~/.continue/config.json (replace the apiKey + apiBase). https://docs.continue.dev",
+  "models": [
+    {
+      "title": "GeekCubo (auto)",
+      "provider": "openai",
+      "model": "auto",
+      "apiBase": "http://127.0.0.1:8787/v1",
+      "apiKey": "sk-geek-PASTE-YOUR-KEY-HERE"
+    },
+    {
+      "title": "Claude Sonnet via GeekCubo",
+      "provider": "openai",
+      "model": "claude-3-5-sonnet-latest",
+      "apiBase": "http://127.0.0.1:8787/v1",
+      "apiKey": "sk-geek-PASTE-YOUR-KEY-HERE"
+    },
+    {
+      "title": "GPT-4o via GeekCubo",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "apiBase": "http://127.0.0.1:8787/v1",
+      "apiKey": "sk-geek-PASTE-YOUR-KEY-HERE"
+    }
+  ],
+  "tabAutocompleteModel": {
+    "title": "Haiku autocomplete",
+    "provider": "openai",
+    "model": "claude-3-5-haiku-latest",
+    "apiBase": "http://127.0.0.1:8787/v1",
+    "apiKey": "sk-geek-PASTE-YOUR-KEY-HERE"
+  },
+  "embeddingsProvider": {
+    "$comment": "GeekCubo v0.1 doesn't proxy embeddings yet — use a direct provider config here."
+  }
+}

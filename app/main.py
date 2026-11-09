@@ -1,0 +1,436 @@
+"""FastAPI app factory for GeekCubo.
+
+The lifespan handler runs migrations + seed once on startup. Tests skip
+the full lifespan and pre-create tables themselves.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+
+import structlog
+from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+
+def _find_design_dir() -> str | None:
+    """Locate the dashboard SPA. Three layouts have to work:
+
+      * ``$GEEKCUBO_DESIGN_DIR``   — explicit override (custom build of the SPA)
+      * ``app/design``         — installed wheel; pyproject force-includes the
+                                 repo-root ``design/`` tree to this path
+      * ``../design``          — repo checkout and the Docker image
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    for candidate in (
+        os.environ.get("GEEKCUBO_DESIGN_DIR"),
+        os.path.join(here, "design"),
+        os.path.join(here, os.pardir, "design"),
+    ):
+        if candidate and os.path.isdir(candidate):
+            return candidate
+    return None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.config import get_settings
+    from packages.db import session as session_mod
+    from packages.db.engine import dispose_engine, get_engine, redacted_url
+    from packages.db.models.base import Base
+
+    settings = get_settings()
+
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.processors.add_log_level,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.dev.ConsoleRenderer(),
+        ],
+        wrapper_class=structlog.make_filtering_bound_logger(
+            getattr(logging, settings.log_level.upper())
+        ),
+    )
+    log = structlog.get_logger()
+    # Redact: on the documented Postgres path the raw URL carries the DB
+    # password, and structured logs are retained by hosted aggregators.
+    log.info("geekcubo_starting", database_url=redacted_url(settings.database_url))
+
+    engine = get_engine(settings.database_url)
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    # create_all only makes missing tables, never alters existing ones. Bring
+    # existing deployments (SQLite volume, Postgres) up to date with columns added
+    # after their initial release so they don't 503 on the new ORM columns.
+    from packages.db.migrate import (
+        ensure_auth_columns,
+        ensure_budget_columns,
+        ensure_chat_attachment_columns,
+        ensure_chat_columns,
+        ensure_chat_search_columns,
+        ensure_custom_provider_columns,
+        ensure_json_capability_split,
+        ensure_local_connect_tables,
+        ensure_quality_columns,
+        ensure_quality_connection_columns,
+        ensure_routing_columns,
+        find_schema_drift,
+    )
+
+    await ensure_budget_columns(engine)
+    await ensure_chat_columns(engine)
+    await ensure_chat_attachment_columns(engine)
+    await ensure_chat_search_columns(engine)
+    await ensure_custom_provider_columns(engine)
+    await ensure_json_capability_split(engine)
+    await ensure_auth_columns(engine)
+    await ensure_routing_columns(engine)
+    await ensure_quality_columns(engine)
+    await ensure_quality_connection_columns(engine)
+    await ensure_local_connect_tables(engine)
+
+    # Any ORM column still absent after migrations will 500 the endpoint that
+    # selects it. Name it in the log at boot instead of letting the operator
+    # discover it as a failing page.
+    drift = await find_schema_drift(engine)
+    if drift:
+        log.error("schema_drift_detected", missing=drift)
+
+    # First-run secret provisioning: generate CREDENTIAL_ENCRYPTION_KEY and
+    # API_KEY_PEPPER on a fresh install and persist them next to the database,
+    # so the guards below see a real key instead of the dev fallback. Runs
+    # after create_all + migrations so the "existing ciphertext but no key"
+    # fail-safe can inspect the tables. Idempotent across restarts.
+    from app.secret_provisioning import provision_secrets
+
+    await provision_secrets(settings, engine)
+
+    # Fail closed before any traffic can be served: refuse to boot when
+    # provider credentials are (or would be) sealed with the publicly-known
+    # dev encryption key. Runs after create_all so a fresh database's empty
+    # provider_keys table counts as "no credentials at risk".
+    from packages.db.guards import (
+        assert_credential_encryption_ready,
+        audit_stored_provider_credentials,
+    )
+
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    await assert_credential_encryption_ready(
+        make_session=session_factory,
+        database_url=settings.database_url,
+        allow_insecure_dev_key=settings.allow_insecure_dev_key,
+        engine=engine,
+    )
+
+    # Surface rotated/corrupt ciphertext instead of letting the router
+    # silently drop those rows. Re-encrypts when the previous key is set.
+    audit = await audit_stored_provider_credentials(
+        make_session=session_factory,
+        previous_key=settings.credential_encryption_previous_key,
+    )
+    if audit.reencrypted:
+        log.warning("reencrypted_provider_keys", providers=list(audit.reencrypted))
+    if audit.undecryptable:
+        log.error(
+            "undecryptable_provider_keys",
+            providers=list(audit.undecryptable),
+        )
+
+    session_mod._session_factory = session_factory
+
+    from app.seed import seed_initial_state
+
+    async with session_mod._session_factory() as s:
+        seed = await seed_initial_state(s)
+        if seed.created and seed.api_key:
+            # No key material in the structured event: logs are retained by
+            # aggregators. The print() below is the one-time delivery channel.
+            log.info("seed_complete", workspace_id=seed.workspace_id)
+            try:
+                print(f"\n  ✓ GeekCubo ready. API key: {seed.api_key}\n")
+            except UnicodeEncodeError:
+                # Non-UTF-8 consoles (e.g. GBK-codepage Windows) can't
+                # encode "✓" — the banner must never kill startup.
+                print(f"\n  GeekCubo ready. API key: {seed.api_key}\n")
+
+        # First-run administrator bootstrap. No default credentials exist: an
+        # uninitialized install prints a one-time setup token to the server
+        # log — the same operator-only channel that has always carried the
+        # first-run API key. Reaching the dashboard is NOT enough to claim it;
+        # you must also be able to read this process's output.
+        from packages.auth import admin_accounts
+
+        if not await admin_accounts.admin_exists(s):
+            issued = await admin_accounts.issue_setup_token(s)
+            log.warning("admin_setup_required")
+            banner = (
+                "\n  ── Administrator setup required ──────────────────────────────\n"
+                "  Open the dashboard and choose “Create Administrator Account”.\n"
+                f"  One-time setup token (valid 24h): {issued.raw_token}\n"
+                "  New token any time:  python -m app.admin_cli setup-token\n"
+                "  Or set up entirely from the shell:  python -m app.admin_cli setup\n"
+            )
+            try:
+                print(banner)
+            except UnicodeEncodeError:
+                print(banner.encode("ascii", "replace").decode("ascii"))
+
+    from app import cache_invalidation_bus
+
+    await cache_invalidation_bus.start_invalidation_listener()
+
+    log.info("geekcubo_ready")
+    yield
+
+    log.info("geekcubo_shutting_down")
+    await cache_invalidation_bus.stop_invalidation_listener()
+    await dispose_engine()
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(
+        title="GeekCubo",
+        description=(
+            "One Gateway. Every AI Model. Self-hosted OpenAI-, Anthropic- and "
+            "Gemini-compatible AI gateway with configurable routing."
+        ),
+        version="1.0.0",
+        lifespan=lifespan,
+        contact={"name": "GeekCubo"},
+        license_info={"name": "MIT"},
+    )
+
+    def _native_error(request, status: int, message: str) -> JSONResponse | None:
+        """The native surfaces promise their own error envelope on every
+        non-200. Failures that never reach a route body — an unknown
+        /v1beta path, a 405 on GET /v1/messages, a validation error on a
+        native route — land in these app-wide handlers, so they must speak
+        the caller's protocol too (same signals the auth middleware uses)."""
+        from app.middleware.auth import protocol_for_scope
+
+        protocol = protocol_for_scope(request.scope)
+        if protocol == "anthropic":
+            from app.protocols import anthropic as proto
+
+            return proto.error_response(status, message)
+        if protocol == "gemini":
+            from app.protocols import gemini as proto
+
+            return proto.error_response(status, message)
+        return None
+
+    # Registered on Starlette's base class: routing-level 404/405 are raised
+    # as starlette.exceptions.HTTPException, which a handler keyed on the
+    # FastAPI subclass never sees (they would fall to Starlette's bare
+    # {"detail": ...} body — neither envelope).
+    @app.exception_handler(StarletteHTTPException)
+    async def http_exc_handler(request, exc: StarletteHTTPException):
+        native = _native_error(request, exc.status_code, str(exc.detail))
+        if native is not None:
+            return native
+        type_map = {
+            401: "auth_error",
+            403: "forbidden",
+            404: "not_found",
+            422: "validation_error",
+            429: "rate_limit_error",
+            503: "upstream_error",
+        }
+        # Routing diagnostics ride on `x-geek-*` headers raised with the
+        # exception. Forward only those: other exception headers are internal
+        # plumbing for the native adapters.
+        forwarded = {
+            k: v for k, v in (getattr(exc, "headers", None) or {}).items()
+            if k.lower().startswith("x-geek-")
+        }
+        error_body: dict = {
+            "message": exc.detail,
+            "type": type_map.get(exc.status_code, "server_error"),
+        }
+        if "x-geek-routing-diagnosis" in forwarded:
+            error_body["code"] = forwarded["x-geek-routing-diagnosis"]
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": error_body},
+            headers=forwarded or None,
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def val_exc_handler(request, exc: RequestValidationError):
+        msg = "; ".join(
+            f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors()
+        )
+        native = _native_error(request, 422, msg)
+        if native is not None:
+            return native
+        return JSONResponse(
+            status_code=422,
+            content={"error": {"message": msg, "type": "validation_error"}},
+        )
+
+    @app.exception_handler(Exception)
+    async def unhandled(request, exc: Exception):
+        native = _native_error(request, 500, "Internal server error")
+        if native is not None:
+            return native
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": {
+                    "message": "Internal server error",
+                    "type": "server_error",
+                }
+            },
+        )
+
+    from app.middleware.auth import AuthMiddleware
+
+    app.add_middleware(AuthMiddleware)
+
+    from app.routes import (
+        analytics,
+        anthropic_compat,
+        auth,
+        chat,
+        chat_attachments,
+        chat_search,
+        console,
+        custom_providers,
+        dashboard_chat,
+        gemini_compat,
+        health,
+        keys,
+        local_connect,
+        models,
+        providers,
+        quality,
+        routing,
+    )
+
+    app.include_router(health.router)
+    app.include_router(auth.router)
+    app.include_router(console.router)
+    app.include_router(providers.router)
+    app.include_router(custom_providers.router)
+    app.include_router(chat.router)
+    app.include_router(dashboard_chat.router)
+    app.include_router(chat_attachments.router)
+    app.include_router(chat_search.router)
+    app.include_router(anthropic_compat.router)
+    app.include_router(gemini_compat.router)
+    app.include_router(analytics.router)
+    app.include_router(models.router)
+    app.include_router(keys.router)
+    app.include_router(routing.router)
+    from app.routes import routing_profiles as routing_profiles_routes
+
+    app.include_router(routing_profiles_routes.router)
+    from app.routes import integrations as integrations_routes
+
+    app.include_router(integrations_routes.router)
+    from app.routes import model_intelligence as model_intelligence_routes
+
+    app.include_router(model_intelligence_routes.router)
+    app.include_router(quality.router)
+    app.include_router(local_connect.router)
+
+    # Every route must carry an explicit authorization class. Without this,
+    # a route added without touching app/auth_policy.py would silently fall
+    # into UNROUTED (credential required, but either kind) instead of failing
+    # loudly here.
+    from app.auth_policy import assert_routes_classified, registered_paths
+
+    assert_routes_classified(registered_paths(app))
+
+    # ── Static SPA (provider keys, routing, analytics, keys) ──
+    from fastapi.responses import HTMLResponse, RedirectResponse
+    from fastapi.staticfiles import StaticFiles
+
+    design_dir = _find_design_dir()
+    if design_dir:
+        app.mount("/static", StaticFiles(directory=design_dir), name="static")
+
+        _asset_token_cache: dict[tuple[str, int, int], str] = {}
+
+        def _asset_version(index_path: str) -> str:
+            """Cache-busting token for index.html's asset URLs.
+
+            A content hash of the served bundles. StaticFiles sends no
+            Cache-Control, so a browser may heuristically cache /static/app.js
+            for minutes-to-hours; without a versioned URL that stale bundle
+            keeps running against a freshly served index.html — which is
+            exactly the Phase 1 "custom-provider form is missing" report: new
+            HTML, old JS, and the save fell through to PUT
+            /v1/providers/__custom__.
+
+            Content (not mtime) so the token changes only when the bytes do,
+            and a re-deploy of identical files keeps working browser caches.
+            Hashed once per (path, mtime_ns, size) so repeat loads are cheap.
+            """
+            import hashlib
+
+            digest = hashlib.sha256()
+            for name in ("app.js", "style.css"):
+                candidate = os.path.join(os.path.dirname(index_path), name)
+                try:
+                    st = os.stat(candidate)
+                except OSError:
+                    continue
+                key = (candidate, st.st_mtime_ns, st.st_size)
+                token = _asset_token_cache.get(key)
+                if token is None:
+                    try:
+                        with open(candidate, "rb") as fh:
+                            token = hashlib.sha256(fh.read()).hexdigest()
+                    except OSError:
+                        continue
+                    _asset_token_cache.clear()
+                    _asset_token_cache[key] = token
+                digest.update(token.encode())
+            return digest.hexdigest()[:16]
+
+        def _serve_index():
+            index = os.path.join(design_dir, "index.html")
+            if not os.path.isfile(index):
+                return RedirectResponse("/health")
+            with open(index, encoding="utf-8") as fh:
+                html = fh.read()
+            html = html.replace("__ASSET_VERSION__", _asset_version(index))
+            # The shell must never be served from cache: it is the only thing
+            # pointing at the current asset version. Revalidating it on every
+            # load is what makes a deploy visible to an already-open browser.
+            return HTMLResponse(
+                html,
+                media_type="text/html",
+                headers={"Cache-Control": "no-store, must-revalidate"},
+            )
+
+        @app.get("/", include_in_schema=False)
+        async def root():
+            return _serve_index()
+
+        @app.get("/providers", include_in_schema=False)
+        async def providers_page():
+            """Deep-link support.
+
+            Operators navigate to /providers (the report's URL) — it used to
+            return a JSON 404, so a bookmarked or typed URL never reached the
+            dashboard at all. Serve the shell; the client reads the path and
+            opens the matching tab.
+            """
+            return _serve_index()
+
+    return app
+
+
+app = create_app()

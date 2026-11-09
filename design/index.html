@@ -1,0 +1,1972 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#F8FAFC" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0B1220" media="(prefers-color-scheme: dark)">
+  <title>GeekCubo — One Gateway. Every AI Model.</title>
+  <!-- Apply the persisted theme BEFORE first paint so a dark-mode user never
+       sees a white flash (and doesn't have to wait for app.js). Kept inline
+       and tiny: this is a blocking script by design. -->
+  <script>
+    (function () {
+      try {
+        var stored = localStorage.getItem("geekcubo-theme") || "system";
+        var dark = stored === "dark" ||
+          (stored === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+      } catch (e) {
+        document.documentElement.setAttribute("data-theme", "light");
+      }
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <!-- Asset URLs carry an ?v= token rewritten by the server from each file's
+       mtime (see app/main.py:_serve_index). Without it a browser that cached
+       app.js before a deploy keeps running the OLD bundle against the NEW
+       index.html — which is exactly how the custom-provider form "vanished":
+       stale JS had no __custom__ branch, so the dropdown fell through to the
+       generic PUT /v1/providers/__custom__. -->
+  <link rel="stylesheet" href="/static/style.css?v=__ASSET_VERSION__">
+  <link rel="icon" href="/static/brand/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/static/brand/favicon-32x32.png" sizes="32x32" type="image/png">
+  <link rel="icon" href="/static/brand/favicon-16x16.png" sizes="16x16" type="image/png">
+  <link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
+  <link rel="manifest" href="/static/brand/site.webmanifest">
+  <meta name="description" content="GeekCubo — One Gateway. Every AI Model. Self-hosted AI gateway with intelligent routing.">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="GeekCubo — One Gateway. Every AI Model.">
+  <meta property="og:description" content="Self-hosted AI gateway with intelligent routing, fallback, and cost control.">
+  <meta property="og:image" content="/static/brand/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="/static/brand/og-image.png">
+</head>
+<body>
+  <!-- ─────────────────────── Auth gate ─────────────────────── -->
+  <!-- Three mutually exclusive states, chosen by /api/auth/status:
+         #login-view    an administrator exists -> sign in
+         #setup-view    no administrator yet    -> create one (needs a token)
+         #checking-view brief probe while we ask the server
+       The console runs on an HttpOnly session cookie the browser never exposes
+       to JavaScript; inference credentials live only in API-key records. -->
+  <div id="auth-gate" class="auth-gate">
+    <button type="button" class="icon-btn auth-theme-btn" id="auth-theme-btn" aria-label="Toggle color theme" title="Toggle color theme">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+    <div class="auth-card">
+      <div class="auth-brand">
+        <img class="brand-logo-img auth-logo-light" src="/static/brand/geekcubo-logo.svg" alt="GeekCubo" width="188" height="50">
+        <img class="brand-logo-img auth-logo-dark" src="/static/brand/geekcubo-logo-dark.svg" alt="GeekCubo" width="188" height="50">
+      </div>
+      <p class="auth-tagline" data-i18n="auth.tagline">One Gateway. Every AI Model.</p>
+
+      <div id="checking-view" class="auth-view" hidden>
+        <h1 class="auth-title" data-i18n="auth.loading">Loading…</h1>
+        <p class="auth-sub" data-i18n="auth.checking_status">Checking administrator status.</p>
+      </div>
+
+      <!-- ── Sign in ── -->
+      <div id="login-view" class="auth-view" hidden>
+        <h1 class="auth-title" data-i18n="auth.signin_title">Sign in</h1>
+
+        <form id="login-form" class="auth-form" autocomplete="on">
+          <label class="field">
+            <span class="field-label" data-i18n="auth.username">Username</span>
+            <input id="login-username" type="text" autocomplete="username"
+                   spellcheck="false" autocapitalize="none" required>
+          </label>
+          <label class="field">
+            <span class="field-label" data-i18n="auth.password">Password</span>
+            <div class="field-control">
+              <input id="login-password" type="password" autocomplete="current-password"
+                     spellcheck="false" required>
+              <button type="button" class="icon-btn" id="login-password-toggle"
+                      title="Show / hide password" aria-label="Show or hide password" data-i18n-title="auth.toggle_password" data-i18n-aria="auth.toggle_password">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+            </div>
+          </label>
+          <button type="submit" class="btn btn-primary btn-full" id="login-submit">
+            <span data-i18n="auth.sign_in">Sign In</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+          </button>
+          <p id="login-status" class="auth-status" aria-live="polite"></p>
+        </form>
+
+        <details class="auth-help">
+          <summary data-i18n="auth.forgot">Forgot your password?</summary>
+          <p data-i18n="auth.reset_hint">Reset it on the host or container:</p>
+          <pre class="code-block">docker compose exec api python -m app.admin_cli reset-password</pre>
+          <p class="muted" data-i18n="auth.reset_note">Keys, providers and usage are unaffected.</p>
+        </details>
+      </div>
+
+      <!-- ── First-run setup ── -->
+      <div id="setup-view" class="auth-view" hidden>
+        <h1 class="auth-title" data-i18n="auth.setup_title">Create administrator account</h1>
+        <p class="auth-sub">
+          <span data-i18n="auth.setup_sub">Controls this GeekCubo installation: provider credentials, API keys and routing.</span>
+        </p>
+
+        <form id="setup-form" class="auth-form" autocomplete="off">
+          <label class="field">
+            <span class="field-label" data-i18n="auth.username">Username</span>
+            <input id="setup-username" type="text" autocomplete="username"
+                   spellcheck="false" autocapitalize="none" required>
+          </label>
+          <label class="field">
+            <span class="field-label" data-i18n="auth.password">Password</span>
+            <div class="field-control">
+              <input id="setup-password" type="password" autocomplete="new-password"
+                     spellcheck="false" required minlength="8">
+              <button type="button" class="icon-btn" id="setup-password-toggle"
+                      title="Show / hide password" aria-label="Show or hide password" data-i18n-title="auth.toggle_password" data-i18n-aria="auth.toggle_password">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+            </div>
+            <span class="field-help" id="setup-policy" data-i18n="auth.min_password">Minimum 8 characters</span>
+          </label>
+          <label class="field">
+            <span class="field-label" data-i18n="auth.confirm_password">Confirm password</span>
+            <input id="setup-password-confirm" type="password" autocomplete="new-password"
+                   spellcheck="false" required minlength="8">
+          </label>
+          <label class="field">
+            <span class="field-label" data-i18n="auth.setup_token">Setup token</span>
+            <input id="setup-token" type="text" autocomplete="off"
+                   spellcheck="false" autocapitalize="none" required
+                   placeholder="From the server log" data-i18n-placeholder="auth.from_log">
+          </label>
+          <button type="submit" class="btn btn-primary btn-full" id="setup-submit">
+            <span data-i18n="auth.create_admin">Create Administrator</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+          </button>
+          <p id="setup-status" class="auth-status" aria-live="polite"></p>
+        </form>
+
+        <details class="auth-help" id="setup-token-help">
+          <summary data-i18n="auth.where_token">Where is the setup token?</summary>
+          <p data-i18n="auth.token_hint">Printed in the server log on first start. To issue a new one:</p>
+          <pre class="code-block">docker compose exec api python -m app.admin_cli setup-token</pre>
+        </details>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─────────────────────── Main shell ─────────────────────── -->
+  <div id="app-shell" class="app-shell" hidden>
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <img class="brand-logo-img brand-logo-img-sm sidebar-logo-light" src="/static/brand/geekcubo-logo.svg" alt="GeekCubo" width="150" height="40">
+        <img class="brand-logo-img brand-logo-img-sm sidebar-logo-dark" src="/static/brand/geekcubo-logo-dark.svg" alt="GeekCubo" width="150" height="40">
+      </div>
+
+      <nav class="sidebar-nav" id="tabs">
+        <button data-tab="overview" class="nav-item active" data-shortcut="1" aria-keyshortcuts="1">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+          <span data-i18n="nav.overview">Overview</span>
+          <kbd>1</kbd>
+        </button>
+        <button data-tab="chat" class="nav-item">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+          <span data-i18n="nav.chat">Chat</span>
+        </button>
+        <button data-tab="providers" class="nav-item" data-shortcut="2" aria-keyshortcuts="2">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="6" y1="10" x2="6" y2="14"/><line x1="10" y1="10" x2="10" y2="14"/></svg>
+          <span data-i18n="nav.providers">Providers</span>
+          <kbd>2</kbd>
+        </button>
+        <button data-tab="routing" class="nav-item" data-shortcut="3" aria-keyshortcuts="3">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M9 6h6M6 9v6a3 3 0 0 0 3 3h6"/></svg>
+          <span data-i18n="nav.routing">Routing</span>
+          <kbd>3</kbd>
+        </button>
+        <button data-tab="local" class="nav-item">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/><circle cx="12" cy="10" r="2.5"/></svg>
+          <span data-i18n="nav.local">Local AI</span>
+        </button>
+        <button data-tab="profiles" class="nav-item" data-shortcut="4" aria-keyshortcuts="4">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="4" rx="1.5"/><rect x="3" y="10" width="18" height="4" rx="1.5"/><rect x="3" y="16" width="18" height="4" rx="1.5"/></svg>
+          <span data-i18n="ui.profiles">Profiles</span>
+          <kbd>4</kbd>
+        </button>
+        <button data-tab="analytics" class="nav-item" data-shortcut="5" aria-keyshortcuts="5">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 5-6"/></svg>
+          <span data-i18n="nav.analytics">Analytics</span>
+          <kbd>5</kbd>
+        </button>
+        <button data-tab="quality" class="nav-item" data-shortcut="6" aria-keyshortcuts="6">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.39 7.36H22l-6.18 4.49L18.21 22 12 17.27 5.79 22l2.39-8.15L2 9.36h7.61z"/></svg>
+          <span data-i18n="nav.quality">Quality</span>
+          <kbd>6</kbd>
+        </button>
+
+        <div class="nav-group-label">Settings</div>
+        <button data-tab="security" class="nav-item" data-shortcut="7" aria-keyshortcuts="7">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
+          <span data-i18n="ui.security">Security</span>
+          <kbd>7</kbd>
+        </button>
+        <button data-tab="keys" class="nav-item" data-shortcut="8" aria-keyshortcuts="8">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="14" r="4"/><path d="M11 11l9-9M16 6l3 3M14 8l3 3"/></svg>
+          <span data-i18n="ui.api_keys">API Keys</span>
+          <kbd>8</kbd>
+        </button>
+        <button data-tab="integrations" class="nav-item" data-shortcut="9" aria-keyshortcuts="9">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7H6a4 4 0 0 0 0 8h3M15 7h3a4 4 0 0 1 0 8h-3M8 11h8"/></svg>
+          <span data-i18n="ui.connect_a_tool">Connect a tool</span>
+          <kbd>9</kbd>
+        </button>
+        <button data-tab="intelligence" class="nav-item">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>
+          <span data-i18n="ui.model_data">Model data</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-foot">
+        <button class="nav-item ghost" id="open-help" title="Open help (?)" aria-keyshortcuts="?">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <span data-i18n="nav.help_docs">Help &amp; docs</span>
+          <kbd>?</kbd>
+        </button>
+        <button class="nav-item ghost" id="open-palette" title="Command palette (Ctrl+K)" aria-keyshortcuts="Control+K Meta+K">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <span data-i18n="nav.search">Search</span>
+          <kbd class="mod-key-combo">Ctrl K</kbd>
+        </button>
+        <div class="sidebar-meta">
+          <span class="status-dot" id="health-dot"></span>
+          <span id="health-text">Connecting…</span>
+          <span class="version-tag" id="version-tag">v0.1.0</span>
+        </div>
+      </div>
+    </aside>
+
+    <main class="content">
+      <header class="topbar">
+        <div class="topbar-left">
+          <h1 class="page-title" id="page-title">Overview</h1>
+          <p class="page-sub" id="page-sub">Your single-tenant LLM router at a glance.</p>
+        </div>
+        <div class="topbar-right">
+          <label for="language-select" class="sr-only" data-i18n="ui.language">Language</label>
+          <select id="language-select" class="btn btn-ghost" aria-label="Language"></select>
+          <div class="theme-toggle" role="radiogroup" aria-label="Color theme">
+            <button type="button" class="theme-opt" data-theme-choice="light" role="radio" aria-checked="false" title="Light theme">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+              <span class="sr-only" data-i18n="ui.light">Light</span>
+            </button>
+            <button type="button" class="theme-opt" data-theme-choice="system" role="radio" aria-checked="false" title="Match system">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+              <span class="sr-only" data-i18n="ui.system">System</span>
+            </button>
+            <button type="button" class="theme-opt" data-theme-choice="dark" role="radio" aria-checked="false" title="Dark theme">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+              <span class="sr-only" data-i18n="ui.dark">Dark</span>
+            </button>
+          </div>
+          <!-- Endpoint control: the hostname is what an operator needs to
+               recognise, and the full URL is one copy away. A popover shows
+               the whole value on demand instead of truncating it in the bar. -->
+          <div class="endpoint-ctl" id="endpoint-ctl">
+            <button class="endpoint-btn" id="endpoint-trigger" type="button"
+                    aria-haspopup="dialog" aria-expanded="false" aria-controls="endpoint-pop"
+                    data-tooltip="Endpoint — click for the full URL">
+              <span class="endpoint-dot" aria-hidden="true"></span>
+              <span class="endpoint-host" id="endpoint-host">localhost</span>
+              <span class="endpoint-path">/v1</span>
+            </button>
+            <button class="endpoint-copy" id="endpoint-copy" type="button"
+                    title="Copy base URL" aria-label="Copy base URL">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+            <div class="endpoint-pop" id="endpoint-pop" role="dialog" aria-label="Base URL" hidden>
+              <p class="endpoint-pop-label" data-i18n="ui.openai_compatible_base_url">OpenAI-compatible base URL</p>
+              <code class="endpoint-pop-url" id="endpoint-full">http://localhost:8000/v1</code>
+              <div class="endpoint-pop-actions">
+                <button class="btn btn-primary btn-sm" id="endpoint-pop-copy" type="button" data-i18n="ui.copy">Copy</button>
+                <span class="muted small" id="endpoint-pop-note" data-i18n="ui.use_this_in_any_openai_compatible_client">Use this in any OpenAI-compatible client.</span>
+              </div>
+            </div>
+          </div>
+          <div class="account-menu">
+            <button class="btn btn-ghost account-btn" id="account-btn"
+                    aria-haspopup="menu" aria-expanded="false" aria-controls="account-dropdown">
+              <span class="account-avatar" id="account-avatar" aria-hidden="true">A</span>
+              <span id="account-username">Administrator</span>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div class="account-dropdown" id="account-dropdown" role="menu" hidden>
+              <div class="account-head">
+                <strong id="account-menu-name" data-i18n="ui.administrator">Administrator</strong>
+                <span class="muted small" id="account-menu-meta" data-i18n="ui.signed_in">Signed in</span>
+              </div>
+              <button class="account-item" role="menuitem" data-go-tab="security" data-i18n="ui.security_and_sessions">Security &amp; sessions</button>
+              <button class="account-item" role="menuitem" data-go-tab="keys" data-i18n="ui.api_keys_2">API keys</button>
+              <div class="account-sep"></div>
+              <button class="account-item danger" role="menuitem" id="logout-btn" data-i18n="ui.sign_out">Sign out</button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div class="panels">
+        <!-- ─────────────── Overview ─────────────── -->
+        <section id="panel-overview" class="panel active">
+          <div class="kpi-grid">
+            <article class="kpi-card" data-tooltip="Sum of all upstream costs over the last 7 days">
+              <div class="kpi-head">
+                <span class="kpi-label" data-i18n="ov.spend">Spend (7d)</span>
+                <svg class="kpi-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+              </div>
+              <div class="kpi-value" id="kpi-spend">$—</div>
+              <div class="kpi-sub" id="kpi-spend-sub">across 0 requests</div>
+            </article>
+            <article class="kpi-card kpi-card-accent" data-tooltip="How much cheaper the same traffic was than always using GPT-4o, based on recorded requests.">
+              <div class="kpi-head">
+                <span class="kpi-label" data-i18n="ov.savings">Routing savings</span>
+                <svg class="kpi-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              </div>
+              <div class="kpi-value" id="kpi-saved">$—</div>
+              <div class="kpi-sub" id="kpi-saved-sub">vs always-GPT-4o</div>
+            </article>
+            <article class="kpi-card" data-tooltip="True median latency across the most recent requests (raw samples, not averaged)">
+              <div class="kpi-head">
+                <span class="kpi-label" data-i18n="ov.p50">p50 latency</span>
+                <svg class="kpi-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              </div>
+              <div class="kpi-value" id="kpi-p50">— ms</div>
+              <div class="kpi-sub" id="kpi-p99">p99 — ms</div>
+            </article>
+            <article class="kpi-card" data-tooltip="Models the router can serve right now, because a configured provider covers them. The catalogue is much larger; those models are not deployable without a matching key.">
+              <div class="kpi-head">
+                <span class="kpi-label" data-i18n="ov.models">Models deployable</span>
+                <svg class="kpi-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+              </div>
+              <div class="kpi-value" id="kpi-models">—</div>
+              <div class="kpi-sub" id="kpi-providers">— providers configured</div>
+            </article>
+          </div>
+
+          <div class="row-2">
+            <article class="card">
+              <header class="card-head">
+                <div>
+                  <h2 class="card-title" data-i18n="ov.quickstart">Quick start</h2>
+                  <p class="card-sub" data-i18n="ui.you_re_up_point_any_openai_sdk_at_your_b">You're up — point any OpenAI SDK at your base URL.</p>
+                </div>
+                <div class="seg" id="lang-seg">
+                  <button class="seg-btn active" data-lang="python">Python</button>
+                  <button class="seg-btn" data-lang="node">Node</button>
+                  <button class="seg-btn" data-lang="curl">curl</button>
+                </div>
+              </header>
+              <pre class="code-pre"><code id="quickstart-code">loading…</code><button class="copy-btn" id="copy-snippet" data-tooltip="Copy snippet"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></pre>
+              <p class="hint">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                Use <code>model="auto"</code> to let the router pick the cheapest capable model.
+              </p>
+              <div class="chat-entry-row">
+                <button class="btn btn-primary btn-sm" data-go-tab="chat" data-i18n="ui.open_chat">Open chat</button>
+                <span class="muted small" data-i18n="ui.open_chat_hint">Chat with your deployed models from the browser — same routing, caching and cost tracking as SDK traffic.</span>
+              </div>
+            </article>
+
+            <article class="card">
+              <header class="card-head">
+                <div>
+                  <h2 class="card-title" data-i18n="ov.recent">Recent activity</h2>
+                  <p class="card-sub" data-i18n="ui.last_5_requests_routed_through_this_serv">Last 5 requests routed through this server.</p>
+                </div>
+                <button class="btn btn-ghost btn-sm" data-go-tab="analytics" data-i18n="ui.view_all">View all</button>
+              </header>
+              <div id="overview-recent" class="recent-mini">
+                <div class="empty-mini">
+                  <p data-i18n="ui.no_requests_yet">No requests yet.</p>
+                  <p class="muted">Once you send your first <code>chat.completions</code> call, it'll show up here.</p>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <article class="card help-banner" id="getting-started">
+            <div>
+              <h3 data-i18n="ui.new_here_get_fully_set_up_in_2_minutes">New here? Get fully set up in 2 minutes</h3>
+              <ol class="checklist">
+                <li id="step-1"><span class="check"></span>Add at least one <a href="#" data-go-tab="providers">provider key</a></li>
+                <li id="step-2"><span class="check"></span>Pick a <a href="#" data-go-tab="routing">routing strategy</a></li>
+                <li id="step-3"><span class="check"></span>Send your first request (it'll appear in <a href="#" data-go-tab="analytics">analytics</a>)</li>
+              </ol>
+            </div>
+            <button class="btn btn-ghost btn-sm" id="dismiss-getting-started" aria-label="Dismiss">×</button>
+          </article>
+        </section>
+
+        <!-- ─────────────── Chat ─────────────── -->
+        <section id="panel-chat" class="panel">
+          <div class="chat-wrap">
+            <aside class="chat-side" id="chat-side">
+              <div class="chat-side-top">
+                <button class="btn btn-primary btn-sm" id="ch-new" data-i18n="chat.new">New chat</button>
+                <button class="icon-btn" id="ch-settings" title="Chat settings" data-i18n-title="chat.settings_title" aria-label="Chat settings">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                </button>
+              </div>
+              <nav class="chat-convos" id="ch-conversations" aria-label="Conversations"></nav>
+              <div class="chat-side-foot">
+                <button class="btn btn-ghost btn-sm" id="ch-clear" data-i18n="chat.clear_history">Clear history…</button>
+              </div>
+            </aside>
+            <div class="chat-main">
+              <header class="chat-head">
+                <button class="icon-btn chat-menu-btn" id="ch-menu-btn" aria-label="Conversations" data-i18n-aria="chat.conversations_aria">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                </button>
+                <div class="chat-head-main">
+                  <h2 id="ch-title" class="chat-title" data-i18n="chat.default_title">New chat</h2>
+                  <p class="chat-sub muted" id="ch-sub"></p>
+                </div>
+                <div class="chat-head-actions">
+                  <button class="btn btn-ghost btn-sm" id="ch-sysprompt" data-i18n="chat.system_prompt">System prompt…</button>
+                  <div id="ch-model" class="chat-model-select gc-select-host" data-labelledby="ch-model-label"></div>
+                  <span id="ch-model-label" class="sr-only" data-i18n="chat.model_aria">Model</span>
+                  <button class="icon-btn" id="ch-regen" title="Regenerate reply" data-i18n-title="chat.regenerate" disabled>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                  </button>
+                </div>
+              </header>
+              <div class="chat-thread" id="ch-thread" role="log" aria-live="polite">
+                <div class="chat-empty" id="ch-empty">
+                  <p class="chat-empty-title" data-i18n="chat.empty_title">Ask anything.</p>
+                  <p class="muted" data-i18n="chat.empty_sub">Requests route through the engine — the same routing, caching and cost tracking as SDK traffic.</p>
+                </div>
+              </div>
+              <div class="chat-drop-overlay" id="ch-drop-overlay" hidden aria-hidden="true">
+                <span data-i18n="chat.attach_drop">Drop files to attach</span>
+              </div>
+              <div class="chat-attachments" id="ch-attachments" hidden></div>
+              <div class="chat-composer">
+                <button type="button" class="icon-btn chat-attach" id="ch-attach" title="Attach files" data-i18n-title="chat.attach" aria-label="Attach files" data-i18n-aria="chat.attach">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                </button>
+                <input type="file" id="ch-file-input" hidden multiple>
+                <textarea id="ch-input" rows="1" placeholder="Message GeekCubo…" data-i18n-placeholder="chat.input_placeholder" aria-label="Message"></textarea>
+                <button type="button" class="btn btn-ghost btn-sm chat-search-toggle" id="ch-search-toggle" aria-pressed="false" hidden title="Web search" data-i18n-title="chat.search_toggle" aria-label="Web search" data-i18n-aria="chat.search_toggle">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                  <span data-i18n="chat.search_toggle">Web search</span>
+                </button>
+                <button class="btn btn-primary" id="ch-send" data-i18n="chat.send">Send</button>
+              </div>
+              <p class="chat-hint muted">
+                <span id="ch-kbd-hint">Enter to send · Shift+Enter for a newline</span>
+                <span id="ch-materialized" hidden></span>
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <!-- ─────────────── Providers ─────────────── -->
+        <section id="panel-providers" class="panel">
+          <article class="card">
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="prov.title">Provider keys</h2>
+                <p class="card-sub">
+                  Encrypted at rest with AES-256-GCM. After rotating
+                  <code>CREDENTIAL_ENCRYPTION_KEY</code>, re-save keys here or set
+                  <code>CREDENTIAL_ENCRYPTION_PREVIOUS_KEY</code> and restart.
+                </p>
+              </div>
+            </header>
+
+            <div class="callout callout-warn" id="providers-decrypt-banner" hidden>
+              <div class="callout-head">Stored keys cannot be decrypted</div>
+              <p class="card-sub" id="providers-decrypt-banner-body"></p>
+            </div>
+
+            <div class="provider-quickadd" id="provider-quickadd"></div>
+
+            <!-- Legacy cleanup. A pre-Phase-1 bundle had no __custom__ branch,
+                 so selecting "OpenAI Format – Others" fell through to the
+                 generic handler and wrote a provider_key row literally named
+                 __custom__. It is inert for routing (no catalog entry maps to
+                 that provider id) but it holds a real operator credential, so
+                 we surface it and let the operator decide. Never auto-deleted. -->
+            <div class="callout callout-warn" id="legacy-custom-banner" hidden>
+              <div class="callout-head">Legacy “__custom__” provider key found</div>
+              <p class="card-sub" id="legacy-custom-body"></p>
+              <div class="inline-form">
+                <button class="btn btn-ghost btn-sm" id="legacy-custom-resave" data-i18n="ui.re_enter_as_a_named_provider">Re-enter as a named provider</button>
+                <button class="btn btn-ghost btn-sm btn-danger" id="legacy-custom-delete" data-i18n="ui.remove_legacy_entry">Remove legacy entry</button>
+              </div>
+            </div>
+
+            <!-- Two paths, two tabs. A standard provider is a known upstream
+                 with a fixed endpoint; a custom provider is any OpenAI-
+                 compatible endpoint the operator names. Keeping them apart
+                 stops the generic form from silently writing a __custom__ row. -->
+            <div class="seg" id="provider-tabs" role="tablist" aria-label="Provider type">
+              <button type="button" class="seg-btn is-active" data-provider-tab="standard" role="tab"
+                      aria-selected="true" aria-controls="provider-form"><span data-i18n="prov.tab_std">Standard Providers</span></button>
+              <button type="button" class="seg-btn" data-provider-tab="custom" role="tab"
+                      aria-selected="false" aria-controls="custom-provider-form"><span data-i18n="prov.tab_custom">Custom Providers</span></button>
+            </div>
+
+            <form id="provider-form" class="inline-form" data-provider-pane="standard">
+              <label class="field flex-grow-0">
+                <span class="field-label" data-i18n="ui.provider">Provider</span>
+                <select id="provider-name">
+                  <option value="openai">OpenAI</option>
+                  <option value="anthropic">Anthropic</option>
+                  <option value="google">Google</option>
+                  <option value="xai">xAI (Grok)</option>
+                  <option value="deepseek">DeepSeek</option>
+                  <option value="groq">Groq</option>
+                  <option value="together">Together</option>
+                  <option value="fireworks">Fireworks</option>
+                      <option value="__custom__" data-i18n="ui.others_openai_format">Others (OpenAI format)</option>
+                </select>
+              </label>
+
+              <!-- Built-in providers only. Replaced by #custom-provider-form
+                   when "OpenAI Format – Others" is selected, so the two paths
+                   can never both be visible (and a stray Enter in the custom
+                   fields can never submit the generic PUT). -->
+              <div class="inline-form provider-key-fields" id="provider-key-fields">
+                <label class="field flex-grow">
+                  <span class="field-label" data-i18n="ui.api_key">API key</span>
+                  <input id="provider-key" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false">
+                </label>
+                <button type="submit" class="btn btn-primary">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                  Save
+                </button>
+              </div>
+            </form>
+
+            <!-- Custom OpenAI-compatible provider creation. A separate form on
+                 purpose: it posts to /v1/custom-providers with a real display
+                 name + base URL, never to /v1/providers/__custom__. -->
+            <form id="custom-provider-form" class="inline-form custom-provider-form" data-provider-pane="custom" novalidate>
+              <p class="field-help custom-help" id="custom-help">
+                Use this option for third-party AI providers that support the
+                OpenAI API format. Enter the provider's name, API base URL and
+                API key. Providers that do not support the OpenAI API format may
+                not work.
+              </p>
+              <label class="field flex-grow">
+                <span class="field-label" data-i18n="ui.provider_name">Provider Name</span>
+                <input id="custom-provider-name" type="text" placeholder="My AI Provider" autocomplete="off" spellcheck="false" required>
+                <span class="field-help" data-i18n="ui.display_name_a_unique_internal_slug_is_d">Display name. A unique internal slug is derived from it automatically.</span>
+                <span class="field-help" id="custom-slug-hint" hidden></span>
+              </label>
+              <label class="field flex-grow">
+                <span class="field-label" data-i18n="ui.api_base_url">API Base URL</span>
+                <input id="custom-base-url" type="text" placeholder="https://api.example.com/v1" autocomplete="off" spellcheck="false" required>
+                <span class="field-help" data-i18n="ui.usually_ends_in_v1_must_be_https_unless_">Usually ends in /v1. Must be https unless the host is in CUSTOM_PROVIDER_ALLOWED_LOCAL_HOSTS.</span>
+              </label>
+              <label class="field flex-grow">
+                <span class="field-label" data-i18n="ui.api_key_2">API Key</span>
+                <input id="custom-api-key" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false" required>
+                <span class="field-help" data-i18n="ui.encrypted_at_rest_never_displayed_again_">Encrypted at rest. Never displayed again after saving.</span>
+              </label>
+              <button type="submit" class="btn btn-primary">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Save provider
+              </button>
+              <p class="field-help custom-form-error" id="custom-form-error" role="alert" hidden></p>
+            </form>
+
+            <article class="card" id="custom-providers-card" hidden>
+              <header class="card-head">
+                <div>
+                  <h2 class="card-title" data-i18n="ui.others_openai_format">Others (OpenAI format)</h2>
+                  <p class="card-sub">
+                    Third-party providers that speak the OpenAI API format.
+                    Add models below, then pin <code>slug/model-id</code> or
+                    mark the provider eligible for <code>model="auto"</code>.
+                  </p>
+                </div>
+              </header>
+              <div id="custom-providers-list"></div>
+            </article>
+
+            <div class="table-wrap" id="providers-table-wrap">
+              <table id="providers-table">
+                <thead><tr>
+                  <th data-i18n="ui.provider">Provider</th>
+                  <th data-i18n="ui.prefix">Prefix</th>
+                  <th data-i18n="ui.status">Status</th>
+                  <th class="th-actions"></th>
+                </tr></thead>
+                <tbody></tbody>
+              </table>
+              <div class="empty-state" id="providers-empty">
+                <div class="empty-illustration">
+                  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="6" y1="10" x2="6" y2="14"/><line x1="10" y1="10" x2="10" y2="14"/></svg>
+                </div>
+                <h3 data-i18n="ui.no_provider_keys_yet">No provider keys yet</h3>
+                <p data-i18n="ui.add_at_least_one_to_start_routing_real_t">Add at least one to start routing real traffic. Pick a provider above or click a quick-add chip.</p>
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <!-- ─────────────── Local AI Connect ─────────────── -->
+        <section id="panel-local" class="panel">
+          <article class="card" id="local-hero">
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="local.title">Local AI Connect</h2>
+                <p class="card-sub" data-i18n="local.sub">Route to models running on your own machines. A small connector dials out to this server, so no ports are opened and no inbound tunnel is needed.</p>
+              </div>
+              <div class="local-hero-actions">
+                <button type="button" class="btn btn-ghost btn-sm" id="local-refresh" data-i18n="local.refresh">Refresh</button>
+                <button type="button" class="btn btn-primary btn-sm" id="local-wizard-open" data-i18n="local.setup_button">Set up a machine</button>
+              </div>
+            </header>
+            <div class="local-kpis" id="local-kpis"></div>
+            <p class="callout callout-warn" id="local-feature-off" hidden>
+              <span class="callout-head" data-i18n="local.feature_off_title">Local AI Connect is turned off on the server</span>
+              <span data-i18n="local.feature_off_body">Set LOCAL_CONNECT_ENABLED=true in the server environment and restart, then reload this page.</span>
+            </p>
+            <p class="callout callout-info" id="local-url-missing" hidden>
+              <span class="callout-head" data-i18n="local.url_missing_title">No public URL configured</span>
+              <span data-i18n="local.url_missing_body">Set LOCAL_CONNECT_PUBLIC_URL to the address connectors should dial (for example https://example.com) so the install command and service files are filled in.</span>
+            </p>
+          </article>
+
+          <article class="card" id="local-settings-card">
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="local.settings_title">Routing behaviour</h2>
+                <p class="card-sub" data-i18n="local.settings_sub">Controls whether local models take part in Auto and whether a request may fall back to the cloud.</p>
+              </div>
+            </header>
+            <form id="local-settings-form" class="stack-form" autocomplete="off">
+              <label class="checkline"><input type="checkbox" id="local-set-enabled"> <span data-i18n="local.set_enabled">Enable local machines for routing</span></label>
+              <label class="checkline"><input type="checkbox" id="local-set-auto"> <span data-i18n="local.set_auto">Include local models in Auto selection</span></label>
+              <label class="checkline"><input type="checkbox" id="local-set-no-fallback"> <span data-i18n="local.set_no_fallback">Never fall back to the cloud when a local model fails</span></label>
+              <p class="field-help" data-i18n="local.settings_help">Local models are only considered for Auto when they have a confirmed price of zero and the machine is approved and online. With "never fall back" on, a local-only request fails rather than being served by a cloud provider.</p>
+              <div class="inline-form">
+                <button type="submit" class="btn btn-primary btn-sm" data-i18n="local.save_settings">Save</button>
+              </div>
+              <p class="auth-status" id="local-settings-status" aria-live="polite"></p>
+            </form>
+          </article>
+
+          <article class="card" id="local-machines-card">
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="local.machines_title">Machines</h2>
+                <p class="card-sub" data-i18n="local.machines_sub">Each machine is one connector. Pending machines are visible but are not routed to until you approve them.</p>
+              </div>
+            </header>
+            <div id="local-machines" class="local-machines"></div>
+            <div class="empty-inline" id="local-machines-empty" hidden>
+              <p data-i18n="local.machines_empty">No machines yet. Use "Set up a machine" to generate an enrollment code.</p>
+            </div>
+          </article>
+
+          <article class="card" id="local-enrollments-card">
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="local.enrollments_title">Enrollment codes</h2>
+                <p class="card-sub" data-i18n="local.enrollments_sub">One-time codes that let a connector register. Each code is consumed the first time a machine connects.</p>
+              </div>
+              <button type="button" class="btn btn-ghost btn-sm" id="local-new-code" data-i18n="local.new_code">New code</button>
+            </header>
+            <div id="local-enrollments" class="local-enrollments"></div>
+          </article>
+
+          <article class="card" id="local-install-card">
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="local.install_title">Install the connector</h2>
+                <p class="card-sub" data-i18n="local.install_sub">Run this on the machine that hosts your models (Ollama, LM Studio, vLLM, llama.cpp or any [OI]-compatible server).</p>
+              </div>
+            </header>
+            <pre class="code-pre"><code id="local-install-command">—</code><button class="copy-btn" id="local-copy-install" data-tooltip="Copy command"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></pre>
+            <details class="setup-help">
+              <summary data-i18n="local.service_files">Run it as a service</summary>
+              <div class="seg" id="local-service-seg">
+                <button type="button" class="seg-btn active" data-local-service="systemd">systemd</button>
+                <button type="button" class="seg-btn" data-local-service="launchd">launchd</button>
+                <button type="button" class="seg-btn" data-local-service="windows">Windows</button>
+              </div>
+              <pre class="code-pre"><code id="local-service-file">—</code><button class="copy-btn" id="local-copy-service" data-tooltip="Copy file"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></pre>
+            </details>
+          </article>
+        </section>
+
+        <!-- ─────────────── Routing ─────────────── -->
+        <section id="panel-routing" class="panel">
+          <article class="card">
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="routing.strategy">Routing strategy</h2>
+                <p class="card-sub">
+                  How the router picks between candidate models when you send <code>model="auto"</code>.
+                </p>
+              </div>
+            </header>
+
+            <div class="strategy-grid" id="strategy-grid" role="radiogroup" aria-label="Routing strategy">
+              <label class="strategy-card tier-balanced" data-value="balanced">
+                <input type="radio" name="strategy" value="balanced">
+                <div class="strategy-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2v20M2 12h20"/></svg></div>
+                <div class="strategy-title">Balanced</div>
+                <p class="strategy-desc" data-i18n="ui.lowest_cost_that_clears_your_quality_flo">Lowest cost that clears your quality floor. Safe default with any number of providers.</p>
+                <span class="strategy-badge" data-i18n="ui.recommended">Recommended</span>
+              </label>
+              <label class="strategy-card tier-fallback" data-value="cheapest">
+                <input type="radio" name="strategy" value="cheapest">
+                <div class="strategy-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div>
+                <div class="strategy-title">Cheapest</div>
+                <p class="strategy-desc" data-i18n="ui.lowest_per_token_cost_meeting_the_reques">Lowest per-token cost meeting the request's capabilities. Output quality may vary.</p>
+              </label>
+              <label class="strategy-card tier-hard" data-value="quality">
+                <input type="radio" name="strategy" value="quality">
+                <div class="strategy-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></div>
+                <div class="strategy-title">Quality First</div>
+                <p class="strategy-desc" data-i18n="ui.highest_score_from_artificial_analysis_o">Highest score from Artificial Analysis or your manual overrides. Without scores it falls back to price as a proxy.</p>
+              </label>
+              <label class="strategy-card tier-adaptive" data-value="adaptive">
+                <input type="radio" name="strategy" value="adaptive">
+                <div class="strategy-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></div>
+                <div class="strategy-title">Adaptive</div>
+                <p class="strategy-desc" data-i18n="ui.re_ranks_by_observed_success_rate_and_la">Re-ranks by observed success rate and latency once each model has 20+ requests here. Until then: Balanced.</p>
+              </label>
+              <label class="strategy-card tier-frontier" data-value="adaptive_gated">
+                <input type="radio" name="strategy" value="adaptive_gated">
+                <div class="strategy-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><path d="M10 6.5h4a3 3 0 0 1 3 3V14"/></svg></div>
+                <div class="strategy-title">Adaptive-Gated</div>
+                <p class="strategy-desc" data-i18n="ui.sends_each_request_to_your_mundane_or_ha">Sends each request to your Mundane or Hard pool based on observable signals (tools, size, length).</p>
+              </label>
+              <label class="strategy-card tier-inactive" data-value="fastest">
+                <input type="radio" name="strategy" value="fastest">
+                <div class="strategy-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div>
+                <div class="strategy-title">Fastest</div>
+                <p class="strategy-desc" data-i18n="ui.highest_throughput_and_lowest_first_toke">Highest throughput and lowest first-token latency from benchmark data. Kept for existing configs.</p>
+                <span class="strategy-badge" data-i18n="ui.legacy">Legacy</span>
+              </label>
+            </div>
+
+            <ul class="routing-warnings" id="routing-warnings" aria-live="polite" hidden></ul>
+
+            <p class="hint" id="routing-status">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+              Pick a card to switch strategy. Saved immediately.
+            </p>
+            <details class="policy-help routing-howto" id="routing-howto">
+              <summary>How Auto routing works — setup, checks and switching off</summary>
+              <ol>
+                <li><strong>Use Auto</strong>: send <code>model="auto"</code> from an SDK, or pick <em>Auto (router picks)</em> in the Chat model menu. Any other model id (for example <code>my-provider/gpt-4o</code>) is pinned and bypasses Auto.</li>
+                <li><strong>Make a model eligible</strong>: under <a href="#" data-go-tab="providers">Providers</a> the provider must be enabled and <em>Included in Auto</em>, the model enabled, and it needs a <em>confirmed</em> price (a custom $ in/out). Reference estimates count only if you allow them in <em>Pricing</em> below. The <em>Availability</em> column in the pool table shows each model's state.</li>
+                <li><strong>Keep a model out of Auto</strong>: disable the model, choose <em>Exclude from Auto</em> on its provider (it stays usable when pinned), or clear its price.</li>
+                <li><strong>Strategy</strong>: click a card above; it applies to the next request. Pools only matter for <em>Adaptive-Gated</em> (and for escalation); other strategies rank every eligible model.</li>
+                <li><strong>Why this model?</strong>: use <em>Test a routing decision</em> below, or read the <code>x-geek-routing-*</code> response headers; Analytics → Recent requests shows the routed model for every call.</li>
+                <li><strong>Nothing eligible</strong>: the request fails with a 422 that names the blocker (no price, missing capability, empty pool, context too long) instead of guessing a model.</li>
+                <li><strong>Stop a reply</strong> in Chat with the Stop button (it replaces Send while generating); the partial answer is kept.</li>
+              </ol>
+              <p class="muted small">Auto <em>model routing</em> is separate from the reserved Auto <em>web search</em> mode in Chat settings, which is not implemented.</p>
+            </details>
+          </article>
+
+          <!-- ─── Policy: pools, fallback, escalation, stickiness ─── -->
+          <article class="card" id="routing-policy-card">
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="routing.pools">Model pools</h2>
+                <p class="card-sub">
+                  Pick from models registered here. Adaptive-Gated routes
+                  <span class="tier-chip tier-mundane">Mundane</span> requests to the
+                  mundane pool and <span class="tier-chip tier-hard">Hard</span> requests
+                  (tools, images, long prompts) to the hard pool. The
+                  <span class="tier-chip tier-fallback">Fallback</span> pool catches a tier
+                  that cannot serve a request.
+                </p>
+              </div>
+            </header>
+
+            <div class="pool-grid">
+              <section class="pool-col tier-mundane" data-pool="mundane" aria-labelledby="pool-h-mundane">
+                <h3 class="pool-title" id="pool-h-mundane"><span class="tier-dot tier-mundane" aria-hidden="true"></span>Mundane</h3>
+                <div class="pool-chips" data-pool-chips="mundane"></div>
+              </section>
+              <section class="pool-col tier-hard" data-pool="hard" aria-labelledby="pool-h-hard">
+                <h3 class="pool-title" id="pool-h-hard"><span class="tier-dot tier-hard" aria-hidden="true"></span>Hard</h3>
+                <div class="pool-chips" data-pool-chips="hard"></div>
+              </section>
+              <section class="pool-col tier-fallback" data-pool="fallback" aria-labelledby="pool-h-fallback">
+                <h3 class="pool-title" id="pool-h-fallback"><span class="tier-dot tier-fallback" aria-hidden="true"></span>Fallback</h3>
+                <div class="pool-chips" data-pool-chips="fallback"></div>
+              </section>
+            </div>
+
+            <div class="model-picker">
+              <div class="model-picker-head">
+                <label class="field flex-grow">
+                  <span class="field-label" data-i18n="ui.registered_models">Registered models</span>
+                  <input id="pool-search" type="search" placeholder="Search models or providers…" autocomplete="off" spellcheck="false">
+                </label>
+                <label class="field flex-grow-0">
+                  <span class="field-label" data-i18n="ui.show">Show</span>
+                  <select id="pool-scope">
+                    <option value="routable" data-i18n="ui.deployable">Deployable</option>
+                    <option value="custom" data-i18n="ui.custom_providers">Custom providers</option>
+                  </select>
+                </label>
+              </div>
+              <div class="table-wrap model-picker-table">
+                <table id="pool-models-table" class="pool-models-table">
+                  <!-- Pools gets the largest share: three toggles must sit side by
+                       side. Fixed percentages shrank it until they wrapped. -->
+                  <colgroup>
+                    <col style="width:24%">
+                    <col style="width:17%">
+                    <col style="width:10%">
+                    <col style="width:15%">
+                    <col style="width:12%">
+                    <col style="width:22%">
+                  </colgroup>
+                  <thead><tr>
+                    <th scope="col" data-i18n="ui.model">Model</th>
+                    <th scope="col" data-i18n="ui.capabilities">Capabilities</th>
+                    <th scope="col" data-i18n="ui.context">Context</th>
+                    <th scope="col" data-i18n="ui.price_1m_in_out">Price /1M (in · out)</th>
+                    <th scope="col" data-i18n="ui.availability">Availability</th>
+                    <th scope="col" class="th-actions" data-i18n="ui.pools">Pools</th>
+                  </tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+              <div class="pager" id="pool-pager">
+                <span class="muted small" id="pool-count"></span>
+                <span class="pager-btns">
+                  <button type="button" class="btn btn-ghost btn-sm" id="pool-prev" data-i18n="ui.previous">Previous</button>
+                  <button type="button" class="btn btn-ghost btn-sm" id="pool-next" data-i18n="ui.next">Next</button>
+                </span>
+              </div>
+            </div>
+          </article>
+
+          <article class="card" id="routing-advanced-card">
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="routing.advanced">Fallback, escalation &amp; continuity</h2>
+                <p class="card-sub" data-i18n="ui.fallback_and_escalation_always_keep_the_">
+                  Fallback and escalation always keep the request's required capabilities.
+                  Decisions are made before a request starts; models never change mid-stream.
+                </p>
+              </div>
+            </header>
+            <form id="routing-policy-form" class="policy-form" novalidate>
+              <fieldset class="pf-card pf-fallback">
+                <legend><span class="tier-dot tier-fallback" aria-hidden="true"></span>Fallback</legend>
+                <label class="checkline"><input type="checkbox" id="pol-fallback-enabled"> Retry the next candidate when an upstream fails</label>
+                <label class="field">
+                  <span class="field-label" data-i18n="ui.maximum_attempts_primary_fallbacks">Maximum attempts (primary + fallbacks)</span>
+                  <input id="pol-fallback-max" type="number" min="1" max="20" inputmode="numeric">
+                </label>
+                <details class="policy-help">
+                  <summary data-i18n="ui.what_counts_as_retryable">What counts as retryable</summary>
+                  <p>Rate limits, timeouts, connection errors, upstream 5xx and unknown-model 404s move to the next candidate. Authentication, permission, malformed-request and content-policy errors stop immediately — retrying them just burns the same failure on another provider.</p>
+                </details>
+              </fieldset>
+
+              <fieldset class="pf-card pf-balanced">
+                <legend><span class="tier-dot tier-balanced" aria-hidden="true"></span>Balanced</legend>
+                <label class="field">
+                  <span class="field-label" data-i18n="ui.quality_floor_percentile_0_off">Quality floor (percentile, 0 = off)</span>
+                  <input id="pol-min-quality" type="number" min="0" max="100" inputmode="numeric">
+                  <span class="field-help" data-i18n="ui.needs_quality_scores_ignored_and_reporte">Needs quality scores; ignored (and reported) when none exist.</span>
+                </label>
+                <details class="policy-help">
+                  <summary data-i18n="ui.what_the_quality_floor_does">What the quality floor does</summary>
+                  <p data-i18n="ui.balanced_weighs_price_against_quality_th">Balanced weighs price against quality. The floor excludes models below that percentile, so a very cheap but weak model cannot win. Set it to 0 to disable the floor entirely.</p>
+                </details>
+              </fieldset>
+
+              <fieldset class="pf-card pf-hard">
+                <legend><span class="tier-dot tier-hard" aria-hidden="true"></span>Hard request signals</legend>
+                <label class="checkline"><input type="checkbox" id="pol-gated-tools"> Tool calls</label>
+                <label class="checkline"><input type="checkbox" id="pol-gated-vision"> Image input</label>
+                <div class="policy-fields two-up">
+                  <label class="field"><span class="field-label" data-i18n="ui.messages">Messages ≥</span><input id="pol-gated-messages" type="number" min="0" inputmode="numeric"></label>
+                  <label class="field"><span class="field-label" data-i18n="ui.prompt_characters">Prompt characters ≥</span><input id="pol-gated-chars" type="number" min="0" inputmode="numeric"></label>
+                </div>
+                <label class="checkline"><input type="checkbox" id="pol-gated-mundane-fallback"> If Hard has no capable model, use Mundane</label>
+                <details class="policy-help">
+                  <summary data-i18n="ui.how_request_signals_are_measured">How request signals are measured</summary>
+                  <p>A request enters the Hard pool when it matches any enabled signal here: a tool schema, an image part, more than the message threshold, or a prompt longer than the character threshold. All four are independent — turn on only the ones that actually predict a harder task for your traffic.</p>
+                </details>
+              </fieldset>
+
+              <fieldset class="pf-card pf-escalation">
+                <legend><span class="tier-dot tier-frontier" aria-hidden="true"></span>Escalation</legend>
+                <label class="field">
+                  <span class="field-label" data-i18n="ui.mode">Mode</span>
+                  <select id="pol-esc-mode">
+                    <option value="off" data-i18n="ui.off">Off</option>
+                    <option value="manual" data-i18n="ui.manual_client_sends_x_geek_escalate">Manual (client sends x-geek-escalate)</option>
+                    <option value="auto" data-i18n="ui.auto_after_repeated_upstream_failures">Auto (after repeated upstream failures)</option>
+                  </select>
+                </label>
+                <div class="policy-fields two-up">
+                  <label class="field"><span class="field-label" data-i18n="ui.failures_before_escalating">Failures before escalating</span><input id="pol-esc-threshold" type="number" min="1" max="20" inputmode="numeric"></label>
+                  <label class="field"><span class="field-label" data-i18n="ui.max_escalations_per_conversation">Max escalations per conversation</span><input id="pol-esc-max" type="number" min="0" max="10" inputmode="numeric"></label>
+                </div>
+                <label class="field">
+                  <span class="field-label" data-i18n="ui.destination_pool">Destination pool</span>
+                  <select id="pol-esc-to"><option value="hard">Hard</option><option value="fallback">Fallback</option></select>
+                </label>
+                <label class="checkline"><input type="checkbox" id="pol-esc-shadow"> Shadow only — record what would escalate, do not switch</label>
+                <details class="policy-help">
+                  <summary data-i18n="ui.when_escalation_triggers">When escalation triggers</summary>
+                  <p>Escalation reacts to observed upstream failures, or to an explicit <code>x-geek-escalate</code> signal from the client. It never guesses at answer quality, so a cheap model that answers well stays put.</p>
+                </details>
+              </fieldset>
+
+              <fieldset class="pf-card pf-continuity">
+                <legend><span class="tier-dot tier-adaptive" aria-hidden="true"></span>Continuity</legend>
+                <label class="checkline"><input type="checkbox" id="pol-sticky"> Keep a conversation on its previous model (cache-friendly)</label>
+                <label class="field">
+                  <span class="field-label" data-i18n="ui.remember_for_minutes">Remember for (minutes)</span>
+                  <input id="pol-sticky-ttl" type="number" min="1" max="1440" inputmode="numeric">
+                </label>
+                <details class="policy-help">
+                  <summary data-i18n="ui.what_continuity_does">What continuity does</summary>
+                  <p>Routing each message independently breaks prompt caches: the same conversation bounces between models and every turn pays full input price. Stickiness pins a conversation to the model it already used, for the window above.</p>
+                </details>
+              </fieldset>
+
+              <fieldset class="pf-card pf-pricing">
+                <legend><span class="tier-dot tier-cheapest" aria-hidden="true"></span><span data-i18n="pricing.legend">Pricing</span></legend>
+                <label class="checkline"><input type="checkbox" id="pol-allow-estimates"> <span data-i18n="pricing.allow_estimates">Allow reference estimates in Auto, Cheapest and cost ceilings</span></label>
+                <span class="field-help" data-i18n="pricing.allow_estimates_help">Off by default. Only confirmed provider prices are compared; models with only a reference estimate stay out of Auto. When on, every estimate-based decision is labelled.</span>
+              </fieldset>
+
+              <div class="policy-actions">
+                <button type="submit" class="btn btn-primary" id="pol-save" data-i18n="ui.save_routing_policy">Save routing policy</button>
+                <span class="auth-status" id="pol-status" aria-live="polite"></span>
+              </div>
+            </form>
+          </article>
+
+          <article class="card" id="routing-explain-card">
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="routing.explain">Test a routing decision</h2>
+                <p class="card-sub" data-i18n="ui.dry_run_shows_which_model_auto_would_cho">Dry-run: shows which model Auto would choose and why. Nothing is sent upstream.</p>
+              </div>
+            </header>
+            <form id="explain-form" class="inline-form explain-form">
+              <label class="checkline"><input type="checkbox" id="ex-tools" checked> Tools</label>
+              <label class="checkline"><input type="checkbox" id="ex-vision"> Vision</label>
+              <label class="checkline"><input type="checkbox" id="ex-json"> JSON</label>
+              <label class="field"><span class="field-label" data-i18n="ui.messages_2">Messages</span><input id="ex-messages" type="number" min="1" value="1" inputmode="numeric"></label>
+              <label class="field"><span class="field-label" data-i18n="ui.prompt_chars">Prompt chars</span><input id="ex-chars" type="number" min="0" value="200" inputmode="numeric"></label>
+              <label class="checkline"><input type="checkbox" id="ex-escalate"> Escalate</label>
+              <button type="submit" class="btn btn-primary btn-sm" data-i18n="ui.explain">Explain</button>
+            </form>
+            <div class="explain-result" id="explain-result" aria-live="polite"></div>
+          </article>
+
+          <article class="card">
+            <header class="card-head">
+              <div>
+                <h2 class="card-title">How <code>model="auto"</code> works</h2>
+                <p class="card-sub" data-i18n="ui.three_filters_applied_in_order">Three filters, applied in order.</p>
+              </div>
+            </header>
+            <ol class="how-list">
+              <li>
+                <strong>Capability filter.</strong>
+                The router inspects your request — is there an image? a tool definition? <code>response_format=json</code>? — and drops models that can't handle it.
+              </li>
+              <li>
+                <strong>Provider filter.</strong>
+                Only models whose provider you've configured survive.
+              </li>
+              <li>
+                <strong>Strategy ranking.</strong>
+                The remaining candidates are scored by your chosen strategy above. The winner is called.
+              </li>
+            </ol>
+            <p class="hint">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+              The chosen model comes back to your client in the <code>x-geek-resolved-model</code> response header. The routing decision is echoed as <code>x-geek-routing-strategy</code>, <code>x-geek-routing-profile</code> and <code>x-geek-routing-effective</code>. <code>x-geek-routing-strategy</code> is still sent for clients that already read it.
+            </p>
+            <details class="auth-help">
+              <summary data-i18n="ui.how_each_strategy_maps_to_litellm_router">How each strategy maps to LiteLLM Router</summary>
+              <div class="table-wrap" style="margin-top:8px">
+                <table class="strategy-map">
+                  <thead><tr>
+                    <th data-i18n="ui.strategy">Strategy</th>
+                    <th>litellm <code>routing_strategy</code></th>
+                    <th><code>model="auto"</code> picks</th>
+                  </tr></thead>
+                  <tbody>
+                    <tr><td><strong>balanced</strong></td><td><code>None</code> (we rank ourselves)</td><td>50/50 normalized AA quality &amp; inverted cost; strict two-axis coverage</td></tr>
+                    <tr><td><strong>cheapest</strong></td><td><code>cost-based-routing</code></td><td>cheapest capable (blended 0.3 input + 0.7 output cost)</td></tr>
+                    <tr><td><strong>fastest</strong></td><td><code>None</code> (we rank ourselves)</td><td>50/50 normalized AA TPS &amp; inverted TTFT; strict two-axis coverage</td></tr>
+                    <tr><td><strong>quality</strong></td><td><code>None</code> (we rank ourselves)</td><td>highest AA Intelligence Index (or manual override); unscored models rank below scored</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <p class="muted" style="margin-top:8px">
+                The strategy controls two things: which model <code>model="auto"</code>
+                resolves to, and how LiteLLM Router picks between deployments
+                that serve the same model (e.g. multiple configured provider keys).
+              </p>
+            </details>
+          </article>
+        </section>
+
+        <!-- ─────────────── Analytics ─────────────── -->
+
+        <section id="panel-profiles" class="panel">
+          <article class="card">
+            <header class="card-head profiles-head">
+              <div>
+                <h2 class="card-title" data-i18n="profiles.title">Routing profiles</h2>
+                <p class="card-sub">Each profile is a model id clients can send, e.g. <code>model: "economy"</code>. <code>auto</code> is built in.</p>
+              </div>
+              <div class="profiles-actions">
+                <input type="search" id="profile-search" placeholder="Search profiles…" aria-label="Search profiles" autocomplete="off">
+                <button type="button" class="btn btn-ghost" id="profile-import-btn" data-i18n="ui.import_json">Import JSON</button>
+                <input type="file" id="profile-import-file" accept="application/json,.json" hidden>
+                <button type="button" class="btn btn-primary" id="profile-new-btn" data-i18n="ui.new_profile">New profile</button>
+              </div>
+            </header>
+            <!-- Presets, always visible: they were previously four small chips
+                 shown only in the empty state, which made them effectively
+                 undiscoverable. Each opens the normal editor pre-filled, so
+                 everything stays editable before saving. -->
+            <section class="preset-section" aria-labelledby="preset-heading">
+              <h3 class="preset-heading" id="preset-heading" data-i18n="preset.heading">Start with a preset</h3>
+              <p class="preset-sub" data-i18n="preset.sub">Templates open the editor pre-filled — adjust anything before saving.</p>
+              <div class="preset-grid" id="preset-grid">
+                <button type="button" class="preset-card" data-profile-template="economy">
+                  <span class="preset-name">Economy</span>
+                  <span class="preset-desc" data-i18n="preset.economy">Cheapest capable model for each request. Lowest spend, no quality floor.</span>
+                  <span class="preset-tag tier-mundane">cheapest</span>
+                </button>
+                <button type="button" class="preset-card" data-profile-template="premium">
+                  <span class="preset-name">Premium</span>
+                  <span class="preset-desc" data-i18n="preset.premium">Strongest models first, price ignored. Best for work where quality dominates.</span>
+                  <span class="preset-tag tier-hard">quality</span>
+                </button>
+                <button type="button" class="preset-card" data-profile-template="coding">
+                  <span class="preset-name">Coding</span>
+                  <span class="preset-desc" data-i18n="preset.coding">Tool calls and long prompts route to the Hard pool. For agent and editor work.</span>
+                  <span class="preset-tag tier-frontier">adaptive · gated</span>
+                </button>
+                <button type="button" class="preset-card" data-profile-template="fast">
+                  <span class="preset-name">Fast</span>
+                  <span class="preset-desc" data-i18n="preset.fast">Balanced routing that prefers lower latency across the pool.</span>
+                  <span class="preset-tag tier-balanced">balanced</span>
+                </button>
+              </div>
+            </section>
+
+            <div class="profile-list" id="profile-list" role="list"></div>
+            <div class="empty-inline" id="profile-empty" hidden>
+              <p><strong>No custom profiles yet.</strong> <code>auto</code> already works — create a profile for a different budget, model set or strategy.</p>
+            </div>
+          </article>
+        </section>
+
+        <section id="panel-integrations" class="panel">
+          <article class="card" id="integrations-card">
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="int.title">Connect your AI tool</h2>
+                <p class="card-sub" data-i18n="ui.generates_configuration_that_points_a_cl">Generates configuration that points a client at this GeekCubo. Keys are referenced by environment variable, never embedded.</p>
+              </div>
+            </header>
+            <div class="int-layout">
+              <div class="int-controls">
+                <label class="field"><span class="field-label" data-i18n="ui.search_tools">Search tools</span>
+                  <input type="search" id="int-search" placeholder="OpenCode, Cursor, cURL…" autocomplete="off"></label>
+                <div class="int-apps" id="int-apps" role="radiogroup" aria-label="Target application"></div>
+                <label class="field"><span class="field-label" data-i18n="ui.routing_profile_or_model">Routing profile or model</span>
+                  <select id="int-model"></select></label>
+                <fieldset class="int-endpoint">
+                  <legend class="field-label" data-i18n="ui.endpoint">Endpoint</legend>
+                  <label class="checkline"><input type="radio" name="int-ep" value="local" checked> Local</label>
+                  <label class="checkline"><input type="radio" name="int-ep" value="remote"> Remote</label>
+                  <input id="int-remote-url" type="url" placeholder="https://your-domain.example.com/v1" autocomplete="off" hidden aria-label="Remote base URL">
+                </fieldset>
+                <label class="field" id="int-variant-wrap" hidden><span class="field-label" data-i18n="ui.format">Format</span>
+                  <select id="int-variant"></select></label>
+              </div>
+              <div class="int-output">
+                <div class="int-status" id="int-status"></div>
+                <div class="int-file">
+                  <span class="int-filename" id="int-filename"></span>
+                  <span class="int-file-actions">
+                    <button type="button" class="btn btn-ghost btn-sm" id="int-copy" data-i18n="ui.copy">Copy</button>
+                    <button type="button" class="btn btn-ghost btn-sm" id="int-download" data-i18n="ui.download">Download</button>
+                  </span>
+                </div>
+                <pre class="int-code" id="int-code" tabindex="0" aria-label="Generated configuration"></pre>
+                <ol class="int-steps" id="int-steps"></ol>
+                <div class="int-notes" id="int-notes"></div>
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <section id="panel-intelligence" class="panel">
+          <article class="card" id="intelligence-card">
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="md.title">Model data sources</h2>
+                <p class="card-sub">Catalogs used to fill in model prices and context limits. They are <strong>information sources, not inference providers</strong> — none of the built-in three needs an API key, and none is ever sent your prompts or provider keys. Values here never override a price you set yourself.</p>
+              </div>
+              <button type="button" class="btn btn-ghost" id="mi-add-btn" data-i18n="ui.add_source">Add source</button>
+            </header>
+            <div class="mi-list" id="mi-list"></div>
+            <form class="mi-form inline-form" id="mi-form" hidden novalidate>
+              <label class="field flex-grow"><span class="field-label" data-i18n="ui.name">Name</span><input id="mi-name" autocomplete="off"></label>
+              <label class="field flex-grow"><span class="field-label" data-i18n="ui.https_url_models_dev_compatible_json">HTTPS URL (models.dev-compatible JSON)</span><input id="mi-url" type="url" placeholder="https://example.com/api.json" autocomplete="off"></label>
+              <button type="submit" class="btn btn-primary btn-sm" data-i18n="ui.save_source">Save source</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="mi-cancel" data-i18n="ui.cancel">Cancel</button>
+              <p class="field-help custom-form-error" id="mi-error" role="alert" hidden></p>
+            </form>
+          </article>
+          <article class="card">
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="md.lookup">Price lookup</h2>
+                <p class="card-sub" data-i18n="ui.shows_what_each_enabled_source_reports_f">Shows what each enabled source reports for a model and which value GeekCubo would use. Your own configured prices always win.</p>
+              </div>
+            </header>
+            <form class="inline-form mi-lookup" id="mi-lookup-form" autocomplete="off">
+              <label class="field flex-grow mi-lookup-field">
+                <span class="field-label" data-i18n="ui.model">Model</span>
+                <input id="mi-lookup-id" placeholder="Search a model id, e.g. gpt-4o" autocomplete="off" spellcheck="false"
+                       role="combobox" aria-expanded="false" aria-controls="mi-lookup-suggest" aria-autocomplete="list">
+              </label>
+              <button type="submit" class="btn btn-secondary" data-i18n="ui.look_up">Look up</button>
+            </form>
+            <!-- Suggestions are filtered catalogue ids; picking one runs the
+                 same lookup the typed form does. -->
+            <ul class="mi-suggest" id="mi-lookup-suggest" role="listbox" hidden></ul>
+            <div id="mi-lookup-result"></div>
+          </article>
+        </section>
+        <section id="panel-analytics" class="panel">
+          <article class="card" id="routing-analytics-card">
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="ui.routing">Routing</h2>
+                <p class="card-sub" id="ra-summary">Counts from your request log. Nothing estimated.</p>
+              </div>
+            </header>
+            <div class="ra-kpis" id="ra-kpis"></div>
+            <!-- Grouped into three bounded panels. Seven flat sections with no
+                 edges read as one undifferentiated list. -->
+            <div class="ra-groups">
+              <section class="ra-group ra-group-wide" aria-labelledby="ra-g-volume">
+                <h3 class="ra-group-title" id="ra-g-volume" data-i18n="ui.volume">Volume</h3>
+                <p class="ra-group-sub">Requests per day. The darker part of each bar is <code>model="auto"</code> traffic.</p>
+                <div class="ra-timeline" id="ra-timeline" role="img" aria-label="Requests per day"></div>
+                <p class="ra-note" id="ra-timeline-note" hidden></p>
+              </section>
+
+              <section class="ra-group" aria-labelledby="ra-g-decisions">
+                <h3 class="ra-group-title" id="ra-g-decisions" data-i18n="ui.routing_decisions">Routing decisions</h3>
+                <p class="ra-group-sub" data-i18n="ui.how_auto_requests_were_classified_and_wh">How Auto requests were classified and where they went.</p>
+                <div class="ra-sub">
+                  <h4 class="ra-sub-title" data-i18n="ui.by_tier">By tier</h4>
+                  <ul class="ra-bars" id="ra-tiers"></ul>
+                </div>
+                <div class="ra-sub">
+                  <h4 class="ra-sub-title" data-i18n="ui.by_strategy">By strategy</h4>
+                  <ul class="ra-bars" id="ra-strategies"></ul>
+                </div>
+                <div class="ra-sub">
+                  <h4 class="ra-sub-title" data-i18n="ui.by_routing_id">By routing id</h4>
+                  <ul class="ra-bars" id="ra-requested"></ul>
+                </div>
+                <div class="ra-sub">
+                  <h4 class="ra-sub-title" data-i18n="ui.top_models_served">Top models served</h4>
+                  <ul class="ra-bars" id="ra-models"></ul>
+                </div>
+              </section>
+
+              <section class="ra-group" aria-labelledby="ra-g-reliability">
+                <h3 class="ra-group-title" id="ra-g-reliability" data-i18n="ui.reliability">Reliability</h3>
+                <p class="ra-group-sub">
+                  <strong>Recorded history</strong> for the selected window — not current
+                  provider health. A provider that failed last week may be fine now.
+                </p>
+                <div class="ra-sub">
+                  <h4 class="ra-sub-title">Fallback</h4>
+                  <div id="ra-fallback" class="ra-fallback"></div>
+                </div>
+                <div class="ra-sub">
+                  <h4 class="ra-sub-title" data-i18n="ui.errors_by_cause">Errors by cause</h4>
+                  <ul class="ra-bars" id="ra-errors"></ul>
+                </div>
+              </section>
+            </div>
+
+            <div class="ra-baseline">
+              <label class="field"><span class="field-label" data-i18n="ui.compare_against_a_baseline_model">Compare against a baseline model</span>
+                <select id="ra-baseline"><option value="" data-i18n="ui.none">None</option></select></label>
+              <button type="button" class="btn btn-secondary btn-sm" id="ra-baseline-go" data-i18n="ui.compare">Compare</button>
+              <div id="ra-baseline-result" class="ra-baseline-result"></div>
+              <details class="policy-help ra-baseline-help">
+                <summary data-i18n="ui.how_the_comparison_is_calculated">How the comparison is calculated</summary>
+                <p>This is an estimate, not an invoice. The backend totals all recorded input and output tokens for successful requests in the window and reprices that whole total at the baseline model's configured rate. It ignores prompt caching, batch pricing, reasoning tokens and negotiated rates — the backend docstring says so explicitly. Good for a directional "would this have been cheaper?" check; not for billing reconciliation.</p>
+              </details>
+            </div>
+          </article>
+
+          <article class="card">
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="an.spend">Spend by model</h2>
+                <p class="card-sub" id="spend-summary">—</p>
+              </div>
+              <div class="seg" id="window-seg">
+                <button class="seg-btn" data-days="1">24h</button>
+                <button class="seg-btn active" data-days="7">7d</button>
+                <button class="seg-btn" data-days="30">30d</button>
+              </div>
+            </header>
+            <div class="bar-chart" id="bar-chart"></div>
+          </article>
+
+          <article class="card">
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="an.latency">Latency by provider</h2>
+                <p class="card-sub" data-i18n="ui.p50_and_p99_sourced_from_local_request_l">p50 and p99 — sourced from local request logs.</p>
+              </div>
+            </header>
+            <div class="table-wrap">
+              <table id="latency-table">
+                <thead><tr>
+                  <th data-i18n="ui.provider">Provider</th>
+                  <th data-i18n="ui.requests">Requests</th>
+                  <th>p50</th>
+                  <th>p99</th>
+                </tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="card">
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="an.recent">Recent requests</h2>
+                <p class="card-sub" data-i18n="ui.newest_first_click_a_row_to_copy_its_tra">Newest first. Click a row to copy its trace ID.</p>
+              </div>
+            </header>
+            <div class="table-wrap">
+              <table id="recent-table">
+                <thead><tr>
+                  <th data-i18n="ui.when">When</th>
+                  <th data-i18n="ui.model">Model</th>
+                  <th data-i18n="ui.routing">Routing</th>
+                  <th data-i18n="ui.provider">Provider</th>
+                  <th data-i18n="ui.tokens_in_out">Tokens (in / out)</th>
+                  <th data-i18n="ui.latency">Latency</th>
+                  <th data-i18n="ui.status">Status</th>
+                </tr></thead>
+                <tbody></tbody>
+              </table>
+              <div class="empty-state" id="recent-empty" hidden>
+                <div class="empty-illustration">
+                  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 5-6"/></svg>
+                </div>
+                <h3 data-i18n="ui.no_traffic_yet">No traffic yet</h3>
+                <p data-i18n="ui.once_you_start_sending_requests_they_ll_">Once you start sending requests, they'll appear here in real time.</p>
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <!-- ─────────────── Keys ─────────────── -->
+        <section id="panel-keys" class="panel">
+          <article class="card">
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="keys.title">Router API keys</h2>
+                <p class="card-sub">
+                  These <code>sk-geek-*</code> keys authenticate SDK and CLI
+                  traffic against this installation — OpenCode, the OpenAI /
+                  Anthropic / Gemini SDKs, <code>curl</code>. They are
+                  <strong>not</strong> dashboard passwords and cannot sign in here.
+                  The secret is shown <strong>once</strong>, at creation.
+                </p>
+              </div>
+            </header>
+
+            <form id="key-form" class="inline-form">
+              <label class="field flex-grow">
+                <span class="field-label" data-i18n="ui.name">Name</span>
+                <input id="key-name" type="text" placeholder="e.g. opencode-laptop, ci-runner, app-prod" autocomplete="off">
+              </label>
+              <label class="field flex-grow-0">
+                <span class="field-label" data-i18n="ui.expires">Expires</span>
+                <select id="key-expiry">
+                  <option value="" data-i18n="ui.never">Never</option>
+                  <option value="7" data-i18n="ui.7_days">7 days</option>
+                  <option value="30" data-i18n="ui.30_days">30 days</option>
+                  <option value="90" data-i18n="ui.90_days">90 days</option>
+                  <option value="365" data-i18n="ui.1_year">1 year</option>
+                </select>
+              </label>
+              <button type="submit" class="btn btn-primary" id="key-create-btn">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Generate New API Key
+              </button>
+            </form>
+
+            <div id="new-key-display" class="callout callout-info" hidden>
+              <div class="callout-head">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                <strong>Copy this key now — it cannot be retrieved later.</strong>
+              </div>
+              <p class="card-sub" id="new-key-caption"></p>
+              <pre class="code-pre"><code id="new-key-value"></code><button class="copy-btn" id="new-key-copy" data-tooltip="Copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></pre>
+              <div class="key-snippet">
+                <span class="muted small" data-i18n="ui.use_it_with_opencode">Use it with OpenCode:</span>
+                <pre class="code-block" id="new-key-snippet"></pre>
+                <button class="copy-btn" id="new-key-snippet-copy" data-tooltip="Copy" data-i18n="ui.copy">Copy</button>
+              </div>
+              <p class="card-sub muted">
+                Store it in your shell as <code>OPENAI_API_KEY</code> (or the
+                equivalent for your client). GeekCubo keeps only a hash — if
+                you lose it, generate a new key.
+              </p>
+            </div>
+
+            <div class="table-wrap">
+              <table id="keys-table" class="keys-table">
+                <!-- Proportional widths: the name and the action trio need room,
+                     the timestamps do not. Fixed percentages previously made
+                     Revoke wrap under Rotate on ordinary laptop widths. -->
+                <colgroup>
+                  <col style="width:18%">
+                  <col style="width:16%">
+                  <col style="width:11%">
+                  <col style="width:11%">
+                  <col style="width:11%">
+                  <col style="width:9%">
+                  <col style="width:24%">
+                </colgroup>
+                <thead><tr>
+                  <th data-i18n="ui.name">Name</th>
+                  <th data-i18n="ui.prefix">Prefix</th>
+                  <th data-i18n="ui.status">Status</th>
+                  <th data-i18n="ui.created">Created</th>
+                  <th data-i18n="ui.last_used">Last used</th>
+                  <th data-i18n="ui.expires">Expires</th>
+                  <th class="th-actions" data-i18n="ui.actions">Actions</th>
+                </tr></thead>
+                <tbody></tbody>
+              </table>
+              <div class="empty-state" id="keys-empty" hidden>
+                <div class="empty-illustration">
+                  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="14" r="4"/><path d="M11 11l9-9M16 6l3 3M14 8l3 3"/></svg>
+                </div>
+                <h3 data-i18n="ui.no_api_keys">No API keys</h3>
+                <p data-i18n="ui.generate_one_above_to_start_sending_requ">Generate one above to start sending requests from an SDK or CLI.</p>
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <!-- ─────────────── Security ─────────────── -->
+        <section id="panel-security" class="panel">
+          <article class="card">
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="ui.administrator">Administrator</h2>
+                <p class="card-sub" data-i18n="ui.the_single_local_account_that_controls_t">
+                  The single local account that controls this installation.
+                </p>
+              </div>
+            </header>
+            <dl class="meta-list">
+              <div><dt>Username</dt><dd id="sec-username">—</dd></div>
+              <div><dt>Password last changed</dt><dd id="sec-password-changed">—</dd></div>
+              <div><dt>Last sign-in</dt><dd id="sec-last-login">—</dd></div>
+              <div><dt>Current session</dt><dd id="sec-session">—</dd></div>
+            </dl>
+            <p class="callout callout-info" id="sec-reset-notice" hidden>
+              <span class="callout-head" data-i18n="ui.password_was_reset_from_the_command_line">Password was reset from the command line</span>
+              <span id="sec-reset-when"></span> — via
+              <code>python -m app.admin_cli reset-password</code>. If you did not
+              do this, treat the host as compromised.
+            </p>
+          </article>
+
+          <article class="card">
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="ui.change_password">Change password</h2>
+                <p class="card-sub">
+                  Changing the password signs out every <em>other</em> device.
+                  This one stays signed in. Router API keys are unaffected.
+                </p>
+              </div>
+            </header>
+            <form id="password-form" class="stack-form" autocomplete="off">
+              <label class="field">
+                <span class="field-label" data-i18n="ui.current_password">Current Password</span>
+                <input id="pw-current" type="password" autocomplete="current-password" required>
+              </label>
+              <label class="field">
+                <span class="field-label" data-i18n="ui.new_password">New Password</span>
+                <input id="pw-new" type="password" autocomplete="new-password" required minlength="8">
+                <span class="field-help" id="pw-policy">Minimum 8 characters</span>
+              </label>
+              <label class="field">
+                <span class="field-label" data-i18n="ui.confirm_new_password">Confirm New Password</span>
+                <input id="pw-confirm" type="password" autocomplete="new-password" required minlength="8">
+              </label>
+              <div class="inline-form">
+                <button type="submit" class="btn btn-primary" id="pw-submit" data-i18n="ui.update_password">Update password</button>
+              </div>
+              <p class="auth-status" id="pw-status" aria-live="polite"></p>
+            </form>
+          </article>
+
+          <article class="card">
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="sec.sessions">Sessions</h2>
+                <p class="card-sub" data-i18n="ui.signed_in_browsers_for_this_administrato">
+                  Signed-in browsers for this administrator. Sessions expire after
+                  12 hours, or 60 minutes idle.
+                </p>
+              </div>
+              <div class="inline-form">
+                <button class="btn btn-ghost btn-danger" id="revoke-others-btn" data-i18n="ui.log_out_all_other_sessions">Log out all other sessions</button>
+              </div>
+            </header>
+            <div class="table-wrap">
+              <table id="sessions-table">
+                <thead><tr>
+                  <th data-i18n="ui.device">Device</th>
+                  <th>IP</th>
+                  <th data-i18n="ui.last_active">Last active</th>
+                  <th data-i18n="ui.expires">Expires</th>
+                </tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <p class="auth-status" id="sessions-status" aria-live="polite"></p>
+          </article>
+
+          <article class="card">
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="ui.local_recovery">Local recovery</h2>
+                <p class="card-sub" data-i18n="ui.password_recovery_is_local_only_by_desig">
+                  Password recovery is local-only by design — there is no email
+                  reset and no public endpoint that can change the password.
+                </p>
+              </div>
+            </header>
+            <ol class="setup-steps">
+              <li data-i18n="ui.open_a_shell_where_geekcubo_runs_host_or">Open a shell where GeekCubo runs (host or container).</li>
+              <li>Run:
+                <pre class="code-block">docker compose exec api python -m app.admin_cli reset-password</pre>
+              </li>
+              <li data-i18n="ui.choose_a_new_password_at_the_prompt_all_">Choose a new password at the prompt. All dashboard sessions are signed out; API keys, providers and usage data are untouched.</li>
+            </ol>
+          </article>
+        </section>
+
+        <!-- ─────────────── Quality scores panel ─────────────── -->
+        <section id="panel-quality" class="panel">
+          <!-- Compact, always-visible connection status. The key entry form is
+               hidden behind "Replace key" so a configured install does not
+               force the operator to hunt for credential recovery. -->
+          <article class="card" id="quality-connect-card">
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="qa.connection">Artificial Analysis connection</h2>
+                <p class="card-sub" id="quality-connect-sub">
+                  <span id="quality-connect-status" class="pill muted">—</span>
+                  <span id="quality-connect-mask"></span>
+                </p>
+              </div>
+              <div class="quality-connect-actions">
+                <button type="button" class="btn btn-ghost btn-sm" id="quality-connect-test" data-i18n="qa.test">Test connection</button>
+                <button type="button" class="btn btn-secondary btn-sm" id="quality-connect-replace" data-i18n="qa.replace">Replace key</button>
+                <button type="button" class="btn btn-danger btn-sm" id="quality-connect-remove" hidden data-i18n="qa.remove">Remove key</button>
+              </div>
+            </header>
+
+            <!-- Last sync + latest error, shown separately so a cached-good
+                 state is never mistaken for "everything is fine right now". -->
+            <dl class="quality-facts" id="quality-connect-meta">
+              <div>
+                <dt data-i18n="qa.last_sync">Last successful sync</dt>
+                <dd id="quality-connect-sync">—</dd>
+              </div>
+              <div id="quality-connect-error-box" hidden>
+                <dt data-i18n="qa.last_error">Latest error</dt>
+                <dd id="quality-connect-error">—</dd>
+              </div>
+            </dl>
+
+            <form id="quality-key-form" class="quality-key-form" autocomplete="off" hidden>
+              <div class="quality-key-row">
+                <label class="field quality-key-field">
+                  <span class="field-label" data-i18n="ui.artificial_analysis_api_key">Artificial Analysis API key</span>
+                  <div class="field-control">
+                    <input id="quality-key-input" type="password" name="aa-api-key"
+                           spellcheck="false" autocapitalize="none" autocomplete="off"
+                           placeholder="aa-..." required minlength="8" aria-describedby="quality-key-help">
+                    <button type="button" class="icon-btn" id="quality-key-toggle"
+                            title="Show / hide key" aria-label="Show or hide key">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </button>
+                  </div>
+                </label>
+                <label class="field quality-limit-field">
+                  <span class="field-label"><span data-i18n="qa.daily_limit_short">Daily limit</span> <span class="muted" data-i18n="ui.optional">(optional)</span></span>
+                  <input id="quality-key-limit" type="number" min="1" max="100000"
+                         inputmode="numeric" placeholder="1000" aria-describedby="quality-key-help">
+                </label>
+                <div class="quality-key-actions">
+                  <button type="submit" class="btn btn-primary" data-i18n="ui.save_key">Save key</button>
+                  <button type="button" class="btn btn-ghost" id="quality-key-test" data-i18n="qa.test">Test connection</button>
+                  <button type="button" class="btn btn-ghost" id="quality-key-cancel" data-i18n="ui.cancel">Cancel</button>
+                </div>
+              </div>
+              <p class="field-help quality-key-help" id="quality-key-help"><span data-i18n="qa.key_hint">Stored encrypted on this server and never shown again. The previous key stays active until this one is saved.</span> <span data-i18n="qa.daily_limit_hint">Requests per 24 hours, as shown on your Artificial Analysis account page. Leave blank to use the documented 1,000 / day.</span></p>
+              <p id="quality-key-status" class="auth-status" aria-live="polite"></p>
+            </form>
+
+            <details class="setup-help" id="quality-setup-help">
+              <summary data-i18n="ui.how_quality_scoring_works">How quality scoring works</summary>
+              <div class="setup-steps">
+                <ol>
+                  <li>Sign up free at <a href="https://artificialanalysis.ai" target="_blank" rel="noopener">artificialanalysis.ai</a> and generate an API key on the account page. The account page also states that key's request allowance.</li>
+                  <li data-i18n="ui.paste_it_above_and_save_it_is_encrypted_">Paste it above and save. It is encrypted at rest, and anything already cached is discarded so the next refresh uses the new key.</li>
+                  <li>Click <strong>Refresh from AA</strong>. Scores then update on their own: results are cached for an hour and survive restarts.</li>
+                </ol>
+                <p class="callout-foot">
+                  Without a key, <code>quality</code> falls back to the legacy cost-based behavior. <code>cheapest</code> / <code>balanced</code> / <code>fastest</code> are unaffected. <strong>Manual overrides</strong> in the table below work without any AA key and take precedence when present.
+                </p>
+              </div>
+            </details>
+          </article>
+
+          <article class="card" id="quality-status-card" hidden>
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="ui.quality_scores">Quality scores</h2>
+                <p class="card-sub">
+                  <span id="quality-status-line">Loading…</span>
+                </p>
+              </div>
+              <button id="quality-refresh" class="btn btn-secondary" type="button">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                Refresh from AA
+              </button>
+            </header>
+
+            <!-- Provenance: what produced these numbers, and what the operator
+                 recorded about their key. Honest about the difference between
+                 "AA's documented allowance" and "the limit your account shows". -->
+            <details class="setup-help" id="quality-provenance">
+              <summary data-i18n="ui.where_these_numbers_come_from">Where these numbers come from</summary>
+              <div class="provenance">
+                <dl class="quality-facts">
+                  <div>
+                    <dt>Source</dt>
+                    <dd>Artificial Analysis — Intelligence Index, output speed and time to first token</dd>
+                  </div>
+                  <div>
+                    <dt>Endpoint</dt>
+                    <dd><code id="quality-endpoint">—</code></dd>
+                  </div>
+                  <div>
+                    <dt>Last fetched</dt>
+                    <dd id="quality-fetched">—</dd>
+                  </div>
+                  <div>
+                    <dt>Coverage</dt>
+                    <dd id="quality-coverage">—</dd>
+                  </div>
+                  <div>
+                    <dt>Key</dt>
+                    <dd id="quality-key-origin">—</dd>
+                  </div>
+                  <div>
+                    <dt>Request limit</dt>
+                    <dd id="quality-limit">—</dd>
+                  </div>
+                </dl>
+                <p class="callout-foot">
+                  <strong>Manual overrides</strong> always win over AA scores. Scores are cached for one hour;
+                  the refresh button bypasses that cache and costs one request.
+                </p>
+                <ul class="link-list">
+                  <li><a href="https://artificialanalysis.ai/methodology" target="_blank" rel="noopener">Artificial Analysis methodology →</a></li>
+                  <li><a href="https://artificialanalysis.ai/documentation" target="_blank" rel="noopener">Artificial Analysis API documentation →</a></li>
+                  <li><a href="https://artificialanalysis.ai" target="_blank" rel="noopener">artificialanalysis.ai →</a></li>
+                </ul>
+              </div>
+            </details>
+
+            <div class="callout" id="quality-preview" hidden>
+              <div class="callout-head">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+                <strong>Right now, <code>model="auto"</code> would resolve to:</strong>
+              </div>
+              <div id="quality-preview-body"></div>
+            </div>
+          </article>
+
+          <article class="card" id="quality-table-card" hidden>
+            <header class="card-head">
+              <div>
+                <h2 class="card-title" data-i18n="q.models">Models</h2>
+                <p class="card-sub">
+                  Set or clear manual scores in the form below, or use a row's <strong data-i18n="ui.manual">Manual</strong> action. Manual values win over AA. Use this when your own evals disagree, or when AA hasn't scored a model yet.
+                </p>
+              </div>
+            </header>
+
+            <!-- Compact manual-score form. One row = model ids (single or
+                 comma-separated for bulk), score, optional note. "Clear"
+                 removes overrides without touching the score field. Downstream
+                 the bulk endpoint skips unknown ids and reports them instead
+                 of failing the whole batch. -->
+            <form id="q-ov-form" class="q-ov-form" autocomplete="off">
+              <div class="q-ov-row">
+                <div class="field q-ov-field-model">
+                  <span class="field-label" id="q-ov-model-label" data-i18n="ui.model">Model</span>
+                  <div id="q-ov-model-picker" class="gc-select-host" data-labelledby="q-ov-model-label"></div>
+                  <input id="q-ov-model" type="hidden">
+                </div>
+                <label class="field q-ov-field-score">
+                  <span class="field-label" data-i18n="q.ov_score">Manual score (0–100)</span>
+                  <input id="q-ov-score" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="75">
+                </label>
+                <label class="field q-ov-field-note">
+                  <span class="field-label" data-i18n="q.ov_note">Note <span class="muted" data-i18n="ui.optional">(optional)</span></span>
+                  <input id="q-ov-note" type="text" maxlength="2000" autocomplete="off"
+                         data-i18n-placeholder="q.ov_note_ph" placeholder="Why this overrides the AA score">
+                </label>
+                <div class="q-ov-actions">
+                  <button type="submit" class="btn btn-primary" data-i18n="q.ov_apply">Apply override</button>
+                  <button type="button" class="btn btn-ghost" id="q-ov-clear" data-i18n="q.ov_clear">Clear override</button>
+                </div>
+              </div>
+              <p class="field-help" data-i18n="q.ov_help_picker">Search and pick one or more models, or tick rows in the table below. Manual scores always win over AA scores.</p>
+            </form>
+
+            <div class="q-bulk" role="toolbar" id="q-bulk" aria-label="Bulk quality actions" data-i18n-aria="providers.bulk_actions">
+              <label class="cp-bulk-select"><input type="checkbox" id="q-select-all"> <span data-i18n="providers.select_all">Select all</span></label>
+              <span class="cp-bulk-count" id="q-selected-count" aria-live="polite">0 selected</span>
+              <input type="search" id="q-filter" class="q-filter" data-i18n-placeholder="q.filter_ph" placeholder="Filter models…" aria-label="Filter models" data-i18n-aria="q.filter_ph">
+              <button type="button" class="btn btn-ghost btn-sm" id="q-select-filtered" data-i18n="q.select_filtered">Select filtered</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="q-deselect-all" data-i18n="q.deselect_all">Deselect all</button>
+              <span class="q-bulk-spacer"></span>
+              <button type="button" class="btn btn-ghost btn-sm" id="q-bulk-set" data-i18n="q.bulk_set">Set score for selected</button>
+              <button type="button" class="btn btn-ghost btn-sm btn-danger" id="q-bulk-clear" data-i18n="q.bulk_clear">Clear selected overrides</button>
+            </div>
+
+            <div class="table-wrap">
+              <table id="quality-table">
+                <thead><tr>
+                  <th class="cp-col-check"><input type="checkbox" id="q-check-all" aria-label="Select all filtered models" data-i18n-aria="q.select_all_filtered"></th>
+                  <th data-i18n="ui.model">Model</th>
+                  <th data-i18n="ui.provider">Provider</th>
+                  <th class="num">AA</th>
+                  <th class="num" data-i18n="ui.manual">Manual</th>
+                  <th class="num" data-i18n="ui.effective">Effective</th>
+                  <th class="num" title="Output tokens per second (Artificial Analysis median, max across reasoning variants). — when AA hasn't indexed this model.">TPS</th>
+                  <th class="num" title="Time to first token in seconds (Artificial Analysis median, min across reasoning variants — the model's non-reasoning fast mode). — when AA hasn't indexed this model.">TTFT</th>
+                  <th class="num" data-i18n="ui.m_blended">$/M blended</th>
+                  <th data-i18n="ui.status">Status</th>
+                  <th class="th-actions"></th>
+                </tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+
+            <p class="card-foot small muted">
+              Powered by <a href="https://artificialanalysis.ai" target="_blank" rel="noopener">Artificial Analysis</a> — Intelligence Index aggregates MMLU-Pro, GPQA, MATH, HumanEval, and other benchmarks. Attribution required.
+            </p>
+          </article>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <!-- ─────────────── Help drawer ─────────────── -->
+  <aside class="drawer" id="help-drawer" hidden>
+    <header class="drawer-head">
+      <h2 data-i18n="ui.help_and_docs">Help &amp; docs</h2>
+      <button class="icon-btn" id="close-help" aria-label="Close help">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </header>
+    <div class="drawer-body">
+      <section>
+        <h3 data-i18n="ui.what_is_geekcubo">What is GeekCubo?</h3>
+        <p>One Gateway. Every AI Model. A self-hosted, OpenAI-compatible AI
+        gateway. Bring your own provider keys, point any OpenAI, Anthropic or
+        Gemini SDK at the local base URL, and <code>model="auto"</code> picks a
+        capable model for each request under the routing policy you configure.</p>
+      </section>
+      <section>
+        <h3 data-i18n="ui.60_second_quickstart">60-second quickstart</h3>
+        <ol>
+          <li>Add a provider key under <a href="#" data-go-tab="providers">Providers</a>.</li>
+          <li>Click <strong>Enable Auto</strong> on providers that may serve <code>model="auto"</code>.</li>
+          <li>Pick a <a href="#" data-go-tab="routing">routing strategy</a>.</li>
+          <li>Generate a key under <a href="#" data-go-tab="keys" data-i18n="ui.api_keys">API Keys</a>.</li>
+          <li>Use this base URL: <code id="help-base-url">http://127.0.0.1:8787/v1</code></li>
+        </ol>
+      </section>
+      <section>
+        <h3 data-i18n="ui.keyboard_shortcuts">Keyboard shortcuts</h3>
+        <ul class="kbd-list">
+          <li><kbd>1</kbd> – <kbd>9</kbd><span data-i18n="ui.switch_tabs">Switch tabs</span></li>
+          <li><kbd class="mod-key">Ctrl</kbd><kbd>K</kbd><span data-i18n="ui.command_palette">Command palette</span></li>
+          <li><kbd>?</kbd><span data-i18n="ui.toggle_this_help">Toggle this help</span></li>
+          <li><kbd>Esc</kbd><span data-i18n="ui.close_drawers_palette">Close drawers / palette</span></li>
+        </ul>
+      </section>
+      <section>
+        <h3 data-i18n="ui.going_further">Going further</h3>
+        <ul class="link-list">
+          <li><a href="https://github.com/GeekCubo/GeekCubo-AI-Router" target="_blank" rel="noreferrer">Source repository →</a></li>
+        </ul>
+      </section>
+    </div>
+  </aside>
+  <div class="scrim" id="scrim" hidden></div>
+
+  <dialog id="chat-settings-dialog" class="gc-dialog" aria-labelledby="chat-settings-title">
+    <form method="dialog" id="chat-settings-form" class="gc-dialog-body" novalidate>
+      <header class="gc-dialog-head">
+        <h2 id="chat-settings-title" data-i18n="chat.settings_title">Chat settings</h2>
+        <button type="button" class="icon-btn" data-dialog-close aria-label="Close">×</button>
+      </header>
+      <div class="pf-grid">
+        <div class="field"><span class="field-label" id="chs-model-label" data-i18n="chat.default_model">Default model</span>
+          <div id="chs-model" class="gc-select-host" data-labelledby="chs-model-label"></div>
+          <span class="field-help" data-i18n="chat.default_model_help">Used for new conversations. The conversation's own picker overrides it.</span></div>
+        <label class="field"><span class="field-label" data-i18n="chat.temperature">Temperature</span>
+          <input id="chs-temperature" type="number" min="0" max="2" step="0.05" placeholder="Provider default" inputmode="decimal"></label>
+        <label class="field"><span class="field-label" data-i18n="chat.max_tokens">Max output tokens</span>
+          <input id="chs-max-tokens" type="number" min="1" max="200000" placeholder="Provider default" inputmode="numeric"></label>
+        <label class="field pf-wide"><span class="field-label" data-i18n="chat.default_system_prompt">Default system prompt</span>
+          <textarea id="chs-system" rows="3" maxlength="8000" data-i18n-placeholder="chat.default_system_prompt_ph" placeholder="You are a concise engineering assistant."></textarea>
+          <span class="field-help" data-i18n="chat.default_system_help">Applies to conversations without their own prompt.</span></label>
+        <label class="checkline"><input type="checkbox" id="chs-save-history" checked> <span data-i18n="chat.save_history">Save chat history on this server</span></label>
+        <label class="field"><span class="field-label" data-i18n="chat.retention_days">Keep conversations for (days)</span>
+          <input id="chs-retention" type="number" min="1" max="3650" placeholder="Forever" inputmode="numeric">
+          <span class="field-help" data-i18n="chat.retention_help">Older conversations are pruned. Blank keeps everything.</span></label>
+        <label class="field"><span class="field-label" data-i18n="chat.font_size">Message text size</span>
+          <select id="chs-font">
+            <option value="small" data-i18n="chat.fs_small">Small</option>
+            <option value="medium" data-i18n="chat.fs_medium">Medium</option>
+            <option value="large" data-i18n="chat.fs_large">Large</option>
+          </select></label>
+        <label class="checkline"><input type="checkbox" id="chs-enter-send" checked> <span data-i18n="chat.enter_to_send">Enter sends the message</span></label>
+      </div>
+      <fieldset class="chat-search-settings" id="chs-search-fields">
+        <legend data-i18n="chat.search_settings">Web search</legend>
+        <p class="field-help" data-i18n="chat.search_help">When enabled, GeekCubo searches the web before answering and cites the pages it used. The context block is injected as a system message, so any model can use it.</p>
+        <div class="pf-grid">
+          <label class="field"><span class="field-label" data-i18n="chat.search_mode">Search mode</span>
+            <select id="chs-search-mode">
+              <option value="off" data-i18n="chat.search_mode_off">Off</option>
+              <option value="manual" data-i18n="chat.search_mode_manual">Manual (per message)</option>
+              <option value="auto" disabled data-i18n="chat.search_mode_auto">Auto (reserved)</option>
+            </select>
+            <span class="field-help" data-i18n="chat.search_mode_help">Manual shows a toggle in the composer. Auto is reserved and not yet implemented.</span></label>
+          <label class="field"><span class="field-label" data-i18n="chat.search_backend">Search backend</span>
+            <select id="chs-search-backend">
+              <option value="" data-i18n="chat.search_backend_none">Choose a backend…</option>
+              <option value="searxng" data-i18n="chat.search_backend_searxng">SearXNG (self-hosted)</option>
+              <option value="brave" data-i18n="chat.search_backend_brave">Brave Search API</option>
+              <option value="tavily" data-i18n="chat.search_backend_tavily">Tavily</option>
+            </select></label>
+          <label class="field pf-wide" id="chs-search-url-row"><span class="field-label" data-i18n="chat.search_url">SearXNG URL</span>
+            <input id="chs-search-url" type="url" maxlength="500" placeholder="http://searxng:8080/" data-i18n-placeholder="chat.search_url_ph">
+            <span class="field-help" data-i18n="chat.search_url_help">Base URL of your SearXNG instance. The installer's search profile serves this on the internal network.</span></label>
+          <div class="field pf-wide" id="chs-search-key-row">
+            <label class="field-label" for="chs-search-key" data-i18n="chat.search_api_key">API key</label>
+            <div class="chat-search-key-line">
+              <input id="chs-search-key" type="password" maxlength="500" autocomplete="off" placeholder="Paste a new key to replace the saved one" data-i18n-placeholder="chat.search_api_key_ph">
+              <span class="field-help" id="chs-search-key-state"></span>
+              <button type="button" class="btn btn-ghost btn-sm" id="chs-search-clear" data-i18n="chat.search_key_clear">Remove saved key</button>
+            </div>
+            <span class="field-help" data-i18n="chat.search_key_help">Stored encrypted on this server and never shown again. Brave and Tavily require a key; SearXNG does not.</span>
+          </div>
+          <label class="field"><span class="field-label" data-i18n="chat.search_max_searches">Max searches per conversation</span>
+            <input id="chs-search-max-searches" type="number" min="1" max="20" inputmode="numeric"></label>
+          <label class="field"><span class="field-label" data-i18n="chat.search_max_results">Results per search</span>
+            <input id="chs-search-max-results" type="number" min="1" max="10" inputmode="numeric"></label>
+          <label class="field"><span class="field-label" data-i18n="chat.search_max_fetches">Pages to fetch per search</span>
+            <input id="chs-search-max-fetches" type="number" min="0" max="5" inputmode="numeric"></label>
+          <label class="field"><span class="field-label" data-i18n="chat.search_timeout">Search timeout (seconds)</span>
+            <input id="chs-search-timeout" type="number" min="3" max="60" inputmode="numeric"></label>
+        </div>
+        <div class="chat-search-test">
+          <button type="button" class="btn btn-ghost btn-sm" id="chs-search-test" data-i18n="chat.search_test">Test connection</button>
+          <span class="field-help" id="chs-search-test-status" role="status"></span>
+        </div>
+      </fieldset>
+      <p class="callout" id="chs-privacy">
+        <span data-i18n="chat.privacy_note">Conversations stay on this server's database. Requests are sent to the providers you configured, exactly like SDK traffic.</span>
+        <label class="checkline"><input type="checkbox" id="chs-privacy-ack"> <span data-i18n="chat.privacy_ack">I understand chat traffic goes to configured providers</span></label>
+      </p>
+      <footer class="gc-dialog-foot">
+        <button type="button" class="btn btn-ghost" data-dialog-close>Cancel</button>
+        <button type="button" class="btn btn-primary" id="chs-save" data-i18n="chat.save_settings">Save settings</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="chat-system-dialog" class="gc-dialog gc-dialog-sm" aria-labelledby="chat-system-title">
+    <form method="dialog" id="chat-system-form" class="gc-dialog-body" novalidate>
+      <header class="gc-dialog-head">
+        <h2 id="chat-system-title" data-i18n="chat.system_prompt">System prompt</h2>
+        <button type="button" class="icon-btn" data-dialog-close aria-label="Close">×</button>
+      </header>
+      <label class="field">
+        <textarea id="chd-system" rows="6" maxlength="8000" data-i18n-placeholder="chat.system_ph"></textarea>
+        <span class="field-help" data-i18n="chat.system_help">Blank = use the chat default. Saved per conversation.</span>
+      </label>
+      <footer class="gc-dialog-foot">
+        <button type="button" class="btn btn-ghost" data-dialog-close>Cancel</button>
+        <button type="button" class="btn btn-primary" id="chd-save" data-i18n="chat.save_prompt">Save prompt</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- ─────────────── Command palette ─────────────── -->
+  <div class="palette" id="palette" hidden>
+    <div class="palette-card">
+      <div class="palette-input-wrap">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input id="palette-input" placeholder="Jump to a tab, copy your base URL, open docs…" autocomplete="off" spellcheck="false">
+        <button type="button" class="icon-btn" id="palette-close" aria-label="Close (Esc)" title="Close (Esc)">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <ul class="palette-list" id="palette-list"></ul>
+    </div>
+  </div>
+
+  <!-- ─────────────── Toast region ─────────────── -->
+  <div class="toast-region" id="toast-region" aria-live="polite"></div>
+
+  <script src="/static/app.js?v=__ASSET_VERSION__"></script>
+
+  <dialog id="profile-dialog" class="gc-dialog" aria-labelledby="profile-dialog-title">
+    <form method="dialog" id="profile-form" class="gc-dialog-body" novalidate>
+      <header class="gc-dialog-head">
+        <h2 id="profile-dialog-title">New profile</h2>
+        <button type="button" class="icon-btn" data-dialog-close aria-label="Close">×</button>
+      </header>
+      <div class="pf-grid">
+        <label class="field"><span class="field-label">Name</span><input id="pf-name" required autocomplete="off" maxlength="120"></label>
+        <label class="field"><span class="field-label">API identifier</span><input id="pf-slug" autocomplete="off" spellcheck="false" maxlength="64" pattern="[a-z0-9-]+">
+          <span class="field-help" id="pf-slug-help">Clients send this as <code>model</code>. Lowercase letters, digits, hyphens.</span></label>
+        <label class="field pf-wide"><span class="field-label">Description (optional)</span><input id="pf-desc" maxlength="400" autocomplete="off"></label>
+        <label class="field"><span class="field-label">Strategy</span>
+          <select id="pf-strategy">
+            <option value="balanced">Balanced</option>
+            <option value="cheapest">Cheapest</option>
+            <option value="quality">Quality First</option>
+            <option value="adaptive">Adaptive</option>
+            <option value="adaptive_gated">Adaptive-Gated</option>
+          </select></label>
+        <label class="field"><span class="field-label">Preferred model (optional)</span><select id="pf-preferred"><option value="">None — let the strategy decide</option></select></label>
+        <label class="field"><span class="field-label">Max price ($ per 1M tokens, in+out)</span><input id="pf-maxcost" type="number" min="0" step="0.01" placeholder="No limit" inputmode="decimal">
+          <span class="field-help">Unpriced models never pass a limit.</span></label>
+        <label class="field"><span class="field-label">Timeout (seconds)</span><input id="pf-timeout" type="number" min="1" max="3600" placeholder="Default" inputmode="numeric"></label>
+        <label class="checkline"><input type="checkbox" id="pf-fallback" checked> Fall back to the next model on retryable failures</label>
+        <label class="field"><span class="field-label">Max attempts (primary + fallbacks)</span><input id="pf-attempts" type="number" min="1" max="20" value="3" inputmode="numeric"></label>
+        <label class="checkline"><input type="checkbox" id="pf-enabled" checked> Enabled</label>
+      </div>
+      <section class="pf-models">
+        <div class="pf-models-head">
+          <h3 class="pool-title">Models</h3>
+          <input type="search" id="pf-model-search" placeholder="Search models…" aria-label="Search models" autocomplete="off">
+          <span class="muted small" id="pf-model-count"></span>
+        </div>
+        <p class="field-help">Tick <strong>Allow</strong> to restrict this profile to specific models (none ticked = any Auto-eligible model). Pools only matter for Adaptive-Gated.</p>
+        <div class="table-wrap pf-model-table">
+          <table>
+            <thead><tr><th scope="col">Model</th><th scope="col">Price /1M</th><th scope="col" class="th-actions">Use</th></tr></thead>
+            <tbody id="pf-model-rows"></tbody>
+          </table>
+        </div>
+      </section>
+      <p class="field-help custom-form-error" id="pf-error" role="alert" hidden></p>
+      <footer class="gc-dialog-foot">
+        <button type="button" class="btn btn-ghost" data-dialog-close>Cancel</button>
+        <button type="submit" class="btn btn-primary" id="pf-save">Save profile</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="local-wizard" class="gc-dialog local-wizard" aria-labelledby="local-wizard-title">
+    <div class="gc-dialog-body">
+      <header class="gc-dialog-head">
+        <h2 id="local-wizard-title" data-i18n="local.wizard_title">Connect a local machine</h2>
+        <button type="button" class="icon-btn" data-local-wizard-close aria-label="Close" data-i18n-aria="local.wizard_close">×</button>
+      </header>
+
+      <ol class="local-steps" id="local-steps" aria-label="Setup steps"></ol>
+
+      <div class="local-step-body" id="local-step-body"></div>
+
+      <p class="field-help custom-form-error" id="local-wizard-error" role="alert" hidden></p>
+
+      <footer class="gc-dialog-foot">
+        <button type="button" class="btn btn-ghost" id="local-wizard-back" data-i18n="local.wizard_back">Back</button>
+        <span class="flex-spacer"></span>
+        <button type="button" class="btn btn-ghost" data-local-wizard-close data-i18n="ui.cancel">Cancel</button>
+        <button type="button" class="btn btn-primary" id="local-wizard-next" data-i18n="local.wizard_next">Next</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <dialog id="profile-delete-dialog" class="gc-dialog gc-dialog-sm" aria-labelledby="pd-title">
+    <form method="dialog" class="gc-dialog-body">
+      <header class="gc-dialog-head">
+        <h2 id="pd-title">Delete profile?</h2>
+        <button type="button" class="icon-btn" data-dialog-close aria-label="Close">×</button>
+      </header>
+      <p id="pd-body"></p>
+      <p class="callout-warn-text" id="pd-default" hidden>This is the default profile. The default will return to <code>auto</code>.</p>
+      <p class="field-help">Providers, keys, registered models and usage history are not affected. The identifier stays reserved so it is never silently reused.</p>
+      <footer class="gc-dialog-foot">
+        <button type="button" class="btn btn-ghost" id="pd-export">Export JSON first</button>
+        <span class="flex-spacer"></span>
+        <button type="button" class="btn btn-ghost" data-dialog-close>Cancel</button>
+        <button type="button" class="btn btn-danger-solid" id="pd-confirm">Delete</button>
+      </footer>
+    </form>
+  </dialog>
+</body>
+</html>

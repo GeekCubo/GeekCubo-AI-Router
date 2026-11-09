@@ -1,0 +1,110 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "packages/**"
+      - "tests/**"
+      - "scripts/**"
+      - "design/**"
+      - "pyproject.toml"
+      - "Dockerfile"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    paths:
+      - "app/**"
+      - "packages/**"
+      - "tests/**"
+      - "scripts/**"
+      - "design/**"
+      - "pyproject.toml"
+      - "Dockerfile"
+      - ".github/workflows/ci.yml"
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: pip install -e ".[dev]"
+      - name: ruff
+        run: ruff check .
+        continue-on-error: false
+      - name: JavaScript syntax
+        run: node --check design/app.js
+      - name: localization
+        run: python -m unittest design.test_i18n_unittest
+      - name: installer syntax
+        run: bash -n install.sh
+      - name: pytest
+        run: PYTHONPATH=. pytest -v --tb=short
+
+  package:
+    name: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade build twine
+      - name: build wheel + sdist
+        run: python -m build
+      - name: metadata is valid for PyPI
+        run: twine check --strict dist/*
+      - name: wheel installs, boots and serves the dashboard
+        run: |
+          python -m venv /tmp/verify
+          /tmp/verify/bin/pip install --quiet dist/*.whl
+          /tmp/verify/bin/geekcubo --version
+          DATABASE_URL=sqlite+aiosqlite:////tmp/verify.db /tmp/verify/bin/geekcubo --port 8123 &
+          pid=$!
+          trap 'kill $pid 2>/dev/null || true' EXIT
+          for _ in $(seq 1 20); do
+            curl -sf http://localhost:8123/health >/dev/null && break
+            sleep 2
+          done
+          curl -sf http://localhost:8123/health || { echo "::error::wheel did not boot"; exit 1; }
+          # The SPA only ships if pyproject force-includes design/ into app/design.
+          curl -sf http://localhost:8123/ | grep -qi "<html" || { echo "::error::dashboard is missing from the wheel"; exit 1; }
+          echo "✓ wheel boots and serves the dashboard"
+
+  smoke:
+    name: docker smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: build image
+        run: docker build -t geekcubo:ci .
+      - name: boot + curl /health
+        run: |
+          docker run -d --name lite -p 8000:8000 \
+            -e DATABASE_URL=sqlite+aiosqlite:///./geekcubo.db \
+            geekcubo:ci
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -sf http://localhost:8000/health; then
+              echo "✓ healthy"
+              docker rm -f lite
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "✗ never became healthy"
+          docker logs lite
+          docker rm -f lite
+          exit 1
