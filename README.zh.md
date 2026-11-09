@@ -6,28 +6,16 @@
 
 ![GeekCubo](design/brand/geekcubo-logo.png)
 
-[![tests](https://img.shields.io/badge/tests-passing-brightgreen)](./README.md#testing)
-[![models](https://img.shields.io/badge/models-100%2B-blue)](#模型目录)
-[![license](https://img.shields.io/badge/license-MIT-blue)](#许可证)
+[![ci](https://github.com/GeekCubo/GeekCubo-AI-Router/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/GeekCubo/GeekCubo-AI-Router/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue)](#许可证)
+[![website](https://img.shields.io/badge/website-geekcubo.com-2563eb)](https://geekcubo.com)
 
-## 语言
+[English](./README.md) | [日本語](./README.ja.md) | [中文](./README.zh.md) | [한국어](./README.ko.md) | [Deutsch](./README.de.md) | [Français](./README.fr.md) | [Español](./README.es.md) | [Italiano](./README.it.md) | [Русский](./README.ru.md) | [Português](./README.pt.md) | [Tiếng Việt](./README.vi.md) | [हिन्दी](./README.hi.md)
 
-- [English](./README.md)
-- [日本語](./README.ja.md)
-- [中文](./README.zh.md)
-- [한국어](./README.ko.md)
-- [Deutsch](./README.de.md)
-- [Français](./README.fr.md)
-- [Español](./README.es.md)
-- [Italiano](./README.it.md)
-- [Русский](./README.ru.md)
-- [Português](./README.pt.md)
-- [Tiếng Việt](./README.vi.md)
-- [हिन्दी](./README.hi.md)
+> **详细文档**（英文）：安全、会话与 API 密钥、路由、连接工具（含 OpenCode）以及部署，请参阅 [docs/](./docs/README.md)。如有出入，以[英文 README](./README.md) 为准。
 
 GeekCubo 是一个自托管、兼容 OpenAI 的网关：自带 provider 密钥，`model="auto"` 会为每个请求选择一个合适的模型，并提供故障转移与成本追踪。
 
-> **它适合放在哪里。** LiteLLM 是需要嵌入的库；OpenRouter 仅限托管；Ollama 仅限本地。GeekCubo 是你自己运行的服务器 —— 内置路由、故障转移与计费。
 
 ## GeekCubo 为什么存在
 
@@ -128,19 +116,6 @@ curl http://127.0.0.1:8787/v1/chat/completions \
 </details>
 
 下面的示例使用本地 Docker base URL `http://127.0.0.1:8787/v1`。
-
-## 为什么？
-
-| | GeekCubo | LiteLLM 库 | OpenRouter | Ollama |
-|---|---|---|---|---|
-| 自托管服务器 | ✓ | 作为库 | ✗ | ✓ |
-| 兼容 OpenAI | ✓ | ✓ | ✓ | ✓ |
-| 多 provider（OpenAI/Anthropic/Google/…）| ✓ | ✓ | ✓ | ✗ |
-| 内置仪表板 | ✓ | ✗ | ✓ | ✗ |
-| `model="auto"`（按策略选择） | ✓ | ✗ | ✗ | n/a |
-| 流式传输 | ✓ | ✓ | ✓ | ✓ |
-| BYOK | ✓ | ✓ | ✗ | n/a |
-| 不需要 Postgres / 不需要 Redis | ✓ | n/a | n/a | ✓ |
 
 ## `model="auto"` —— 招牌特性
 

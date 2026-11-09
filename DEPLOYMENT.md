@@ -57,7 +57,7 @@ Edit `.env`. The values that matter in production:
 | `CREDENTIAL_ENCRYPTION_KEY` | Encrypts provider keys at rest. With SQLite it is generated automatically on first start and saved in `/data/.geekcubo-secrets`; set it yourself only on Postgres or to supply your own value (`openssl rand -hex 32`). Either way, **back it up**: losing it means stored provider keys cannot be decrypted. |
 | `ALLOW_INSECURE_DEV_KEY` | Must be **unset/false** in production. |
 | `TRUST_PROXY_HEADERS` | `true` behind Nginx, so session cookies are marked `Secure`. |
-| `PUBLIC_BASE_URL` | Optional display URL for `./install.sh`: your own address, for example `https://example.com` or `https://api.example.com`. It does not configure DNS or the bind address. |
+| `PUBLIC_BASE_URL` | Your own public address, for example `https://example.com` or `https://api.example.com` (no `/v1`). Settings → API Keys shows it as the client API endpoint, Connect a tool pre-fills it, and `./install.sh` displays it. Never derived from request headers. It does not configure DNS or the bind address. |
 | `CUSTOM_PROVIDER_ALLOWED_LOCAL_HOSTS` | Leave empty unless you really run a local model server. |
 | `REDIS_URL` | Optional. Moves the prompt cache to Redis. It does not make multi-worker deployment supported; GeekCubo runs as one process. |
 | `LOCAL_CONNECT_PUBLIC_URL` | Your public HTTPS origin (for example `https://example.com`), written into the Local AI Connect install command; see below. |
@@ -447,3 +447,22 @@ provider keys are redacted.
 - Metadata source fetching is SSRF-guarded (https, pinned DNS, redirect
   re-validation, size/time caps, no provider keys).
 - The container runs as an unprivileged user and binds to loopback.
+
+---
+
+## Appendix: running without Compose
+
+GeekCubo is a single Docker container, so it runs anywhere Docker does. Without
+Compose, build the image from a checkout and keep the data on a named volume:
+
+```bash
+docker build -t geekcubo .
+docker run -d --name geekcubo -p 127.0.0.1:8787:8000 \
+  -v geekcubo-data:/data \
+  -e DATABASE_URL=sqlite+aiosqlite:////data/geekcubo.db \
+  geekcubo
+```
+
+Tagged releases are set up to publish a multi-architecture image to
+`ghcr.io/geekcubo/geekcubo-ai-router` through `.github/workflows/release.yml`;
+use that image name once a release has been published.

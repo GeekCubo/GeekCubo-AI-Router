@@ -6,28 +6,16 @@ Tương thích OpenAI. BYOK. Workspace đơn. Streaming. `model="auto"`.
 
 ![GeekCubo](design/brand/geekcubo-logo.png)
 
-[![tests](https://img.shields.io/badge/tests-passing-brightgreen)](./README.md#testing)
-[![models](https://img.shields.io/badge/models-100%2B-blue)](#danh-mục-mô-hình)
-[![license](https://img.shields.io/badge/license-MIT-blue)](#giấy-phép)
+[![ci](https://github.com/GeekCubo/GeekCubo-AI-Router/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/GeekCubo/GeekCubo-AI-Router/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue)](#giấy-phép)
+[![website](https://img.shields.io/badge/website-geekcubo.com-2563eb)](https://geekcubo.com)
 
-## Ngôn ngữ
+[English](./README.md) | [日本語](./README.ja.md) | [中文](./README.zh.md) | [한국어](./README.ko.md) | [Deutsch](./README.de.md) | [Français](./README.fr.md) | [Español](./README.es.md) | [Italiano](./README.it.md) | [Русский](./README.ru.md) | [Português](./README.pt.md) | [Tiếng Việt](./README.vi.md) | [हिन्दी](./README.hi.md)
 
-- [English](./README.md)
-- [日本語](./README.ja.md)
-- [中文](./README.zh.md)
-- [한국어](./README.ko.md)
-- [Deutsch](./README.de.md)
-- [Français](./README.fr.md)
-- [Español](./README.es.md)
-- [Italiano](./README.it.md)
-- [Русский](./README.ru.md)
-- [Português](./README.pt.md)
-- [Tiếng Việt](./README.vi.md)
-- [हिन्दी](./README.hi.md)
+> **Tài liệu chi tiết** (tiếng Anh): bảo mật, phiên đăng nhập và khóa API, định tuyến, kết nối công cụ gồm OpenCode, triển khai — xem [docs/](./docs/README.md). Nếu có khác biệt, [README tiếng Anh](./README.md) là bản chuẩn.
 
 GeekCubo là một cổng tự lưu trữ tương thích OpenAI: mang theo khoá provider của riêng bạn và `model="auto"` sẽ chọn một mô hình phù hợp cho mỗi yêu cầu, cùng dự phòng và theo dõi chi phí.
 
-> **Vị trí của nó.** LiteLLM là một thư viện bạn nhúng vào; OpenRouter chỉ là dịch vụ lưu trữ; Ollama chỉ chạy cục bộ. GeekCubo là máy chủ bạn tự vận hành — với định tuyến, dự phòng và hạch toán tích hợp sẵn.
 
 ## Vì sao GeekCubo ra đời
 
@@ -128,18 +116,6 @@ curl http://127.0.0.1:8787/v1/chat/completions \
 </details>
 
 Các ví dụ bên dưới dùng URL gốc Docker cục bộ `http://127.0.0.1:8787/v1`.
-
-## Tại sao?
-
-| | GeekCubo | Thư viện LiteLLM | OpenRouter | Ollama |
-|---|---|---|---|---|
-| Server tự lưu trữ | ✓ | dạng thư viện | ✗ | ✓ |
-| Tương thích OpenAI | ✓ | ✓ | ✓ | ✓ |
-| Đa provider (OpenAI/Anthropic/Google/…) | ✓ | ✓ | ✓ | ✗ |
-| Dashboard tích hợp | ✓ | ✗ | ✓ | ✗ |
-| `model="auto"` (chọn theo chính sách) | ✓ | ✗ | ✗ | n/a |
-| Streaming | ✓ | ✓ | ✓ | ✓ |
-| Không cần Postgres / không cần Redis | ✓ | n/a | n/a | ✓ |
 
 ## `model="auto"` — tính năng chủ lực
 

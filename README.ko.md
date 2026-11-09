@@ -2,32 +2,20 @@
 
 **하나의 게이트웨이. 모든 AI 모델.**
 **오픈소스 AI 게이트웨이 및 지능형 LLM 라우터.** OpenAI 호환, BYOK, 자체 호스팅. 스트리밍 및 `model="auto"` 라우팅.
-OpenAI 호환. BYOK. 단일 작업 공간. 스트리밍. `모델="자동"`.
+OpenAI 호환. BYOK. 단일 작업 공간. 스트리밍. `model="auto"`.
 
 ![GeekCubo](design/brand/geekcubo-logo.png)
 
-[![테스트](https://img.shields.io/badge/tests-passing-brightgreen)](./README.md#testing)
-[![모델](https://img.shields.io/badge/models-100%2B-blue)](#모델-카탈로그)
-[![라이센스](https://img.shields.io/badge/license-MIT-blue)](#라이선스)
+[![ci](https://github.com/GeekCubo/GeekCubo-AI-Router/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/GeekCubo/GeekCubo-AI-Router/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue)](#라이선스)
+[![website](https://img.shields.io/badge/website-geekcubo.com-2563eb)](https://geekcubo.com)
 
-## 언어
+[English](./README.md) | [日本語](./README.ja.md) | [中文](./README.zh.md) | [한국어](./README.ko.md) | [Deutsch](./README.de.md) | [Français](./README.fr.md) | [Español](./README.es.md) | [Italiano](./README.it.md) | [Русский](./README.ru.md) | [Português](./README.pt.md) | [Tiếng Việt](./README.vi.md) | [हिन्दी](./README.hi.md)
 
-- [한국어](./README.md)
-- [일본어](./README.ja.md)
-- [중국어](./README.zh.md)
-- [한국어](./README.ko.md)
-- [독일어](./README.de.md)
-- [프랑스어](./README.fr.md)
-- [스페인어](./README.es.md)
-- [이탈리아어](./README.it.md)
-- [Русский](./README.ru.md)
-- [포르투갈어](./README.pt.md)
-- [Tiếng Viet](./README.vi.md)
-- [힌디어](./README.hi.md)
+> **자세한 문서**(영어): 보안, 세션과 API 키, 라우팅, OpenCode를 포함한 도구 연결, 배포는 [docs/](./docs/README.md)를 참조하세요. 내용이 다르면 [영어 README](./README.md)가 우선합니다.
 
 GeekCubo는 자체 호스팅되는 OpenAI 호환 게이트웨이입니다. 자체 공급자 키를 가져오면 `model="auto"`가 각 요청에 적합한 모델을 선택하고, 폴백과 비용 추적도 처리합니다.
 
-> **어디에 맞나요?** LiteLLM은 내장하는 라이브러리이고, OpenRouter는 호스팅 전용, Ollama는 로컬 전용입니다. GeekCubo는 라우팅, 폴백, 회계가 내장된 직접 운영하는 서버입니다.
 
 ## GeekCubo가 존재하는 이유
 
@@ -128,19 +116,6 @@ curl http://127.0.0.1:8787/v1/chat/completions \
 </details>
 
 아래 예에서는 로컬 Docker 기본 URL `http://127.0.0.1:8787/v1`을 사용합니다.
-
-## 왜?
-
-| | GeekCubo | LiteLLM 라이브러리 | 오픈라우터 | 올라마 |
-|---|---|---|---|---|
-| 자체 호스팅 서버 | ✓ | 도서관으로 | ✗ | ✓ |
-| OpenAI 호환 | ✓ | ✓ | ✓ | ✓ |
-| 다중 제공자(OpenAI/Anthropic/Google/…) | ✓ | ✓ | ✓ | ✗ |
-| 내장 대시보드 | ✓ | ✗ | ✓ | ✗ |
-| `model="auto"` (정책 기반 선택) | ✓ | ✗ | ✗ | 해당 없음 |
-| 스트리밍 | ✓ | ✓ | ✓ | ✓ |
-| BYOK | ✓ | ✓ | ✗ | 해당 없음 |
-| Postgres 없음/Redis 필요 없음 | ✓ | 해당 없음 | 해당 없음 | ✓ |
 
 ## `model="auto"` — 헤드라인 기능
 

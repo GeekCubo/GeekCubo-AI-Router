@@ -5,24 +5,13 @@ Compatível com OpenAI. BYOK. Auto-hospedado. Streaming e roteamento `model="aut
 
 ![GeekCubo](design/brand/geekcubo-logo.png)
 
-[![tests](https://img.shields.io/badge/tests-passing-brightgreen)](./README.md#testing)
-[![models](https://img.shields.io/badge/models-100%2B-blue)](#catálogo-de-modelos)
-[![license](https://img.shields.io/badge/license-MIT-blue)](#licença)
+[![ci](https://github.com/GeekCubo/GeekCubo-AI-Router/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/GeekCubo/GeekCubo-AI-Router/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue)](#licença)
+[![website](https://img.shields.io/badge/website-geekcubo.com-2563eb)](https://geekcubo.com)
 
-## Idiomas
+[English](./README.md) | [日本語](./README.ja.md) | [中文](./README.zh.md) | [한국어](./README.ko.md) | [Deutsch](./README.de.md) | [Français](./README.fr.md) | [Español](./README.es.md) | [Italiano](./README.it.md) | [Русский](./README.ru.md) | [Português](./README.pt.md) | [Tiếng Việt](./README.vi.md) | [हिन्दी](./README.hi.md)
 
-- [English](./README.md)
-- [日本語](./README.ja.md)
-- [中文](./README.zh.md)
-- [한국어](./README.ko.md)
-- [Deutsch](./README.de.md)
-- [Français](./README.fr.md)
-- [Español](./README.es.md)
-- [Italiano](./README.it.md)
-- [Русский](./README.ru.md)
-- [Português](./README.pt.md)
-- [Tiếng Việt](./README.vi.md)
-- [हिन्दी](./README.hi.md)
+> **Documentação detalhada** (em inglês): segurança, sessões e chaves de API, roteamento, conexão de ferramentas incluindo OpenCode e implantação — veja [docs/](./docs/README.md). Em caso de divergência, vale o [README em inglês](./README.md).
 
 O GeekCubo é um gateway auto-hospedado e compatível com OpenAI: traga suas próprias chaves de provedor e `model="auto"` escolhe um modelo capaz para cada solicitação, com fallback e rastreamento de custos.
 
@@ -123,18 +112,6 @@ curl http://127.0.0.1:8787/v1/chat/completions \
 </details>
 
 Os exemplos abaixo usam a URL base local do Docker `http://127.0.0.1:8787/v1`.
-
-## Por quê?
-
-| | GeekCubo | Biblioteca LiteLLM | OpenRouter | Ollama |
-|---|---|---|---|---|
-| Compatível com OpenAI | ✓ | ✓ | ✓ | ✓ |
-| Multi-provider (OpenAI/Anthropic/Google/…) | ✓ | ✓ | ✓ | ✗ |
-| Dashboard embutido | ✓ | ✗ | ✓ | ✗ |
-| `model="auto"` (seleção por política) | ✓ | ✗ | ✗ | n/a |
-| Streaming | ✓ | ✓ | ✓ | ✓ |
-| BYOK | ✓ | ✓ | ✗ | n/a |
-| Sem Postgres / sem Redis necessário | ✓ | n/a | n/a | ✓ |
 
 ## `model="auto"` — a feature destaque
 

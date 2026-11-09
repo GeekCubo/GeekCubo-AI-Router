@@ -5,24 +5,13 @@ OpenAI-संगत। BYOK। सेल्फ-होस्टेड। स्�
 
 ![GeekCubo](design/brand/geekcubo-logo.png)
 
-[![tests](https://img.shields.io/badge/tests-passing-brightgreen)](./README.md#testing)
-[![models](https://img.shields.io/badge/models-100%2B-blue)](#मॉडल-कैटलॉग)
-[![license](https://img.shields.io/badge/license-MIT-blue)](#लाइसेंस)
+[![ci](https://github.com/GeekCubo/GeekCubo-AI-Router/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/GeekCubo/GeekCubo-AI-Router/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue)](#लाइसेंस)
+[![website](https://img.shields.io/badge/website-geekcubo.com-2563eb)](https://geekcubo.com)
 
-## भाषाएँ
+[English](./README.md) | [日本語](./README.ja.md) | [中文](./README.zh.md) | [한국어](./README.ko.md) | [Deutsch](./README.de.md) | [Français](./README.fr.md) | [Español](./README.es.md) | [Italiano](./README.it.md) | [Русский](./README.ru.md) | [Português](./README.pt.md) | [Tiếng Việt](./README.vi.md) | [हिन्दी](./README.hi.md)
 
-- [English](./README.md)
-- [日本語](./README.ja.md)
-- [中文](./README.zh.md)
-- [한국어](./README.ko.md)
-- [Deutsch](./README.de.md)
-- [Français](./README.fr.md)
-- [Español](./README.es.md)
-- [Italiano](./README.it.md)
-- [Русский](./README.ru.md)
-- [Português](./README.pt.md)
-- [Tiếng Việt](./README.vi.md)
-- [हिन्दी](./README.hi.md)
+> **विस्तृत दस्तावेज़** (अंग्रेज़ी में): सुरक्षा, सत्र और API कुंजियाँ, रूटिंग, OpenCode सहित टूल कनेक्ट करना और डिप्लॉयमेंट — [docs/](./docs/README.md) देखें। किसी अंतर की स्थिति में [अंग्रेज़ी README](./README.md) मान्य है।
 
 ## GeekCubo क्यों मौजूद है
 
@@ -121,17 +110,6 @@ curl http://127.0.0.1:8787/v1/chat/completions \
 </details>
 
 नीचे दिए गए उदाहरण स्थानीय Docker बेस URL `http://127.0.0.1:8787/v1` का उपयोग करते हैं।
-
-## क्यों?
-
-| | GeekCubo | LiteLLM लाइब्रेरी | OpenRouter | Ollama |
-|---|---|---|---|---|
-| OpenAI-compatible | ✓ | ✓ | ✓ | ✓ |
-| Multi-provider (OpenAI/Anthropic/Google/…) | ✓ | ✓ | ✓ | ✗ |
-| बिल्ट-इन डैशबोर्ड | ✓ | ✗ | ✓ | ✗ |
-| `model="auto"` (नीति-आधारित चयन) | ✓ | ✗ | ✗ | n/a |
-| स्ट्रीमिंग | ✓ | ✓ | ✓ | ✓ |
-| न Postgres / न Redis आवश्यक | ✓ | n/a | n/a | ✓ |
 
 ## `model="auto"` — मुख्य फ़ीचर
 

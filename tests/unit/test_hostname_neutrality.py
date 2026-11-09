@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 USER_FACING = [
     *sorted(ROOT.glob("README*.md")),
+    *sorted((ROOT / "docs").glob("*.md")),
     ROOT / "DEPLOYMENT.md",
     ROOT / "DEMO.md",
     ROOT / ".env.example",

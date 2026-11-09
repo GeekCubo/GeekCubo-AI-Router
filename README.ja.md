@@ -2,32 +2,20 @@
 
 **ひとつのゲートウェイ。すべての AI モデル。**
 **オープンソースの AI ゲートウェイ＆インテリジェント LLM ルーター。** OpenAI 互換、BYOK、セルフホスト。ストリーミングと `model="auto"` ルーティング。
-OpenAI対応。ビヨク。単一のワークスペース。ストリーミング中。 `モデル="自動"`。
+OpenAI 互換。BYOK。単一ワークスペース。ストリーミング。`model="auto"`。
 
 ![GeekCubo](design/brand/geekcubo-logo.png)
 
-[![テスト](https://img.shields.io/badge/tests-passing-brightgreen)](./README.md#testing)
-[![モデル](https://img.shields.io/badge/models-100%2B-blue)](#モデルカタログ)
-[![ライセンス](https://img.shields.io/badge/license-MIT-blue)](#ライセンス)
+[![ci](https://github.com/GeekCubo/GeekCubo-AI-Router/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/GeekCubo/GeekCubo-AI-Router/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue)](#ライセンス)
+[![website](https://img.shields.io/badge/website-geekcubo.com-2563eb)](https://geekcubo.com)
 
-## 言語
+[English](./README.md) | [日本語](./README.ja.md) | [中文](./README.zh.md) | [한국어](./README.ko.md) | [Deutsch](./README.de.md) | [Français](./README.fr.md) | [Español](./README.es.md) | [Italiano](./README.it.md) | [Русский](./README.ru.md) | [Português](./README.pt.md) | [Tiếng Việt](./README.vi.md) | [हिन्दी](./README.hi.md)
 
-- [英語](./README.md)
-- [日本語](./README.ja.md)
-- [中文](./README.zh.md)
-- [한국어](./README.ko.md)
-- [ドイツ語](./README.de.md)
-- [フランス語](./README.fr.md)
-- [スペイン語](./README.es.md)
-- [イタリア語](./README.it.md)
-- [Русский](./README.ru.md)
-- [ポルトガル語](./README.pt.md)
-- [Tiếng Việt](./README.vi.md)
-- [हिन्दी](./README.hi.md)
+> **詳細なドキュメント**（英語）: セキュリティ、セッションと API キー、ルーティング、OpenCode を含むツール接続、デプロイについては [docs/](./docs/README.md) を参照してください。内容が異なる場合は[英語版 README](./README.md) が優先されます。
 
 GeekCubo は、セルフホスト型で OpenAI 互換のゲートウェイです。独自のプロバイダー キーを持ち込めば、`model="auto"` が各リクエストに適切なモデルを選択し、フォールバックとコスト追跡も行います。
 
-> **位置づけ。** LiteLLM は組み込むライブラリ、OpenRouter はホスト型のみ、Ollama はローカルのみ。GeekCubo は、ルーティング・フォールバック・会計が組み込まれた、自分で運用するサーバーです。
 
 ## GeekCubo が存在する理由
 
@@ -128,19 +116,6 @@ curl http://127.0.0.1:8787/v1/chat/completions \
 </details>
 
 以下の例では、ローカルの Docker ベース URL `http://127.0.0.1:8787/v1` を使います。
-
-＃＃ なぜ？
-
-| | GeekCubo | LiteLLM ライブラリ |オープンルーター |オラマ |
-|---|---|---|---|---|
-|セルフホスト型サーバー | ✓ |図書館として | ✗ | ✓ |
-| OpenAI対応 | ✓ | ✓ | ✓ | ✓ |
-|マルチプロバイダー (OpenAI/Anthropic/Google/…) | ✓ | ✓ | ✓ | ✗ |
-|内蔵ダッシュボード | ✓ | ✗ | ✓ | ✗ |
-| `model="auto"`（ポリシーに基づく選択） | ✓ | ✗ | ✗ |該当なし |
-|ストリーミング | ✓ | ✓ | ✓ | ✓ |
-|ビヨク | ✓ | ✓ | ✗ |該当なし |
-| Postgres や Redis は不要 | ✓ |該当なし |該当なし | ✓ |
 
 ## `model="auto"` — 見出し機能
 

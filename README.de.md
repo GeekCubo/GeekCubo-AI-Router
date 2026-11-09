@@ -6,28 +6,16 @@ OpenAI-kompatibel. BYOK. Einzelner Workspace. Streaming. `model="auto"`.
 
 ![GeekCubo](design/brand/geekcubo-logo.png)
 
-[![tests](https://img.shields.io/badge/tests-passing-brightgreen)](./README.md#testing)
-[![models](https://img.shields.io/badge/models-100%2B-blue)](#modellkatalog)
-[![license](https://img.shields.io/badge/license-MIT-blue)](#lizenz)
+[![ci](https://github.com/GeekCubo/GeekCubo-AI-Router/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/GeekCubo/GeekCubo-AI-Router/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue)](#lizenz)
+[![website](https://img.shields.io/badge/website-geekcubo.com-2563eb)](https://geekcubo.com)
 
-## Sprachen
+[English](./README.md) | [日本語](./README.ja.md) | [中文](./README.zh.md) | [한국어](./README.ko.md) | [Deutsch](./README.de.md) | [Français](./README.fr.md) | [Español](./README.es.md) | [Italiano](./README.it.md) | [Русский](./README.ru.md) | [Português](./README.pt.md) | [Tiếng Việt](./README.vi.md) | [हिन्दी](./README.hi.md)
 
-- [English](./README.md)
-- [日本語](./README.ja.md)
-- [中文](./README.zh.md)
-- [한국어](./README.ko.md)
-- [Deutsch](./README.de.md)
-- [Français](./README.fr.md)
-- [Español](./README.es.md)
-- [Italiano](./README.it.md)
-- [Русский](./README.ru.md)
-- [Português](./README.pt.md)
-- [Tiếng Việt](./README.vi.md)
-- [हिन्दी](./README.hi.md)
+> **Ausführliche Dokumentation** (auf Englisch): Sicherheit, Sitzungen und API-Schlüssel, Routing, Tool-Anbindung inklusive OpenCode, Bereitstellung — siehe [docs/](./docs/README.md). Bei Abweichungen gilt die [englische README](./README.md).
 
 GeekCubo ist ein selbst gehostetes, OpenAI-kompatibles Gateway: Bringen Sie Ihre eigenen Provider-Schlüssel mit, und `model="auto"` wählt für jede Anfrage ein passendes Modell — mit Fallback und Kostenverfolgung.
 
-> **Wo es hineinpasst.** LiteLLM ist eine Bibliothek, die man einbettet; OpenRouter ist nur gehostet; Ollama ist nur lokal. GeekCubo ist der Server, den man selbst betreibt — mit Routing, Fallback und Abrechnung bereits eingebaut.
 
 ## Warum es GeekCubo gibt
 
@@ -126,18 +114,6 @@ curl http://127.0.0.1:8787/v1/chat/completions \
 </details>
 
 Die folgenden Beispiele verwenden die lokale Docker-Basis-URL `http://127.0.0.1:8787/v1`.
-
-## Warum?
-
-| | GeekCubo | LiteLLM-Bibliothek | OpenRouter | Ollama |
-|---|---|---|---|---|
-| Selbst gehosteter Server | ✓ | als Bibliothek | ✗ | ✓ |
-| OpenAI-kompatibel | ✓ | ✓ | ✓ | ✓ |
-| Multi-Provider (OpenAI/Anthropic/Google/…) | ✓ | ✓ | ✓ | ✗ |
-| Eingebautes Dashboard | ✓ | ✗ | ✓ | ✗ |
-| `model="auto"` (richtlinienbasierte Auswahl) | ✓ | ✗ | ✗ | n/a |
-| Streaming | ✓ | ✓ | ✓ | ✓ |
-| Kein Postgres / kein Redis erforderlich | ✓ | n/a | n/a | ✓ |
 
 ## `model="auto"` — das Hauptmerkmal
 

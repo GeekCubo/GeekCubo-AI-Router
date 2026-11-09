@@ -5,24 +5,13 @@ Compatibile con OpenAI. BYOK. Self-hosted. Streaming e routing `model="auto"`.
 
 ![GeekCubo](design/brand/geekcubo-logo.png)
 
-[![tests](https://img.shields.io/badge/tests-passing-brightgreen)](./README.md#testing)
-[![models](https://img.shields.io/badge/models-100%2B-blue)](#catalogo-modelli)
-[![license](https://img.shields.io/badge/license-MIT-blue)](#licenza)
+[![ci](https://github.com/GeekCubo/GeekCubo-AI-Router/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/GeekCubo/GeekCubo-AI-Router/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue)](#licenza)
+[![website](https://img.shields.io/badge/website-geekcubo.com-2563eb)](https://geekcubo.com)
 
-## Lingue
+[English](./README.md) | [日本語](./README.ja.md) | [中文](./README.zh.md) | [한국어](./README.ko.md) | [Deutsch](./README.de.md) | [Français](./README.fr.md) | [Español](./README.es.md) | [Italiano](./README.it.md) | [Русский](./README.ru.md) | [Português](./README.pt.md) | [Tiếng Việt](./README.vi.md) | [हिन्दी](./README.hi.md)
 
-- [English](./README.md)
-- [日本語](./README.ja.md)
-- [中文](./README.zh.md)
-- [한국어](./README.ko.md)
-- [Deutsch](./README.de.md)
-- [Français](./README.fr.md)
-- [Español](./README.es.md)
-- [Italiano](./README.it.md)
-- [Русский](./README.ru.md)
-- [Português](./README.pt.md)
-- [Tiếng Việt](./README.vi.md)
-- [हिन्दी](./README.hi.md)
+> **Documentazione dettagliata** (in inglese): sicurezza, sessioni e chiavi API, routing, collegamento degli strumenti incluso OpenCode, deployment — vedi [docs/](./docs/README.md). In caso di differenze vale il [README in inglese](./README.md).
 
 GeekCubo è un gateway self-hosted compatibile con OpenAI: porta le tue chiavi provider e `model="auto"` sceglie un modello capace per ogni richiesta, con fallback e monitoraggio dei costi.
 
@@ -123,17 +112,6 @@ curl http://127.0.0.1:8787/v1/chat/completions \
 </details>
 
 Gli esempi qui sotto usano l'URL base Docker locale `http://127.0.0.1:8787/v1`.
-
-## Perché?
-
-| | GeekCubo | Libreria LiteLLM | OpenRouter | Ollama |
-|---|---|---|---|---|
-| Compatibile con OpenAI | ✓ | ✓ | ✓ | ✓ |
-| Multi-provider (OpenAI/Anthropic/Google/…) | ✓ | ✓ | ✓ | ✗ |
-| Dashboard integrata | ✓ | ✗ | ✓ | ✗ |
-| `model="auto"` (selezione secondo la politica) | ✓ | ✗ | ✗ | n/a |
-| Streaming | ✓ | ✓ | ✓ | ✓ |
-| Nessun Postgres / nessun Redis richiesto | ✓ | n/a | n/a | ✓ |
 
 ## `model="auto"` — la feature di punta
 

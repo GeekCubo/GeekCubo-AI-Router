@@ -5,24 +5,13 @@ OpenAI-совместимый. BYOK. Self-hosted. Стриминг и маршр
 
 ![GeekCubo](design/brand/geekcubo-logo.png)
 
-[![tests](https://img.shields.io/badge/tests-passing-brightgreen)](./README.md#testing)
-[![models](https://img.shields.io/badge/models-100%2B-blue)](#каталог-моделей)
-[![license](https://img.shields.io/badge/license-MIT-blue)](#лицензия)
+[![ci](https://github.com/GeekCubo/GeekCubo-AI-Router/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/GeekCubo/GeekCubo-AI-Router/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue)](#лицензия)
+[![website](https://img.shields.io/badge/website-geekcubo.com-2563eb)](https://geekcubo.com)
 
-## Языки
+[English](./README.md) | [日本語](./README.ja.md) | [中文](./README.zh.md) | [한국어](./README.ko.md) | [Deutsch](./README.de.md) | [Français](./README.fr.md) | [Español](./README.es.md) | [Italiano](./README.it.md) | [Русский](./README.ru.md) | [Português](./README.pt.md) | [Tiếng Việt](./README.vi.md) | [हिन्दी](./README.hi.md)
 
-- [English](./README.md)
-- [日本語](./README.ja.md)
-- [中文](./README.zh.md)
-- [한국어](./README.ko.md)
-- [Deutsch](./README.de.md)
-- [Français](./README.fr.md)
-- [Español](./README.es.md)
-- [Italiano](./README.it.md)
-- [Русский](./README.ru.md)
-- [Português](./README.pt.md)
-- [Tiếng Việt](./README.vi.md)
-- [हिन्दी](./README.hi.md)
+> **Подробная документация** (на английском): безопасность, сеансы и API-ключи, маршрутизация, подключение инструментов, включая OpenCode, развёртывание — см. [docs/](./docs/README.md). При расхождениях приоритет у [английского README](./README.md).
 
 ## Зачем существует GeekCubo
 
@@ -121,17 +110,6 @@ curl http://127.0.0.1:8787/v1/chat/completions \
 </details>
 
 Примеры ниже используют локальный базовый URL Docker `http://127.0.0.1:8787/v1`.
-
-## Почему?
-
-| | GeekCubo | Библиотека LiteLLM | OpenRouter | Ollama |
-|---|---|---|---|---|
-| OpenAI-совместимый | ✓ | ✓ | ✓ | ✓ |
-| Мульти-провайдер (OpenAI/Anthropic/Google/…) | ✓ | ✓ | ✓ | ✗ |
-| Встроенный дашборд | ✓ | ✗ | ✓ | ✗ |
-| `model="auto"` (выбор по политике) | ✓ | ✗ | ✗ | n/a |
-| Стриминг | ✓ | ✓ | ✓ | ✓ |
-| Без Postgres / без Redis | ✓ | n/a | n/a | ✓ |
 
 ## `model="auto"` — главная фича
 
