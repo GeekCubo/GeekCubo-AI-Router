@@ -48,7 +48,8 @@ never read, whatever files exist in the directory.
 ## Ask GeekCubo in Chat
 
 Open **Chat** and choose **Ask GeekCubo** above the message box. The box
-shows *Answers come from the GeekCubo X.Y.Z documentation*; ask as usual,
+shows *Answers grounded in GeekCubo documentation* (hover it for the
+documentation version); ask as usual,
 for example how a routing strategy behaves or how to set up a feature.
 
 The answer comes from the model selected in the header, with the relevant
@@ -64,8 +65,10 @@ How the mode behaves:
 - **Per message.** Each question records the mode it was asked in, and the
   conversation history shows an *Ask GeekCubo* label on those questions.
   Normal Chat messages never receive documentation, before or after.
-- **New and reopened conversations start in Normal Chat.** Nothing switches
-  modes on its own.
+- **New conversations start in Normal Chat.** Reopening a conversation
+  restores the mode of its most recent question, so a conversation that
+  never used Ask GeekCubo always reopens in Normal Chat. Switching modes
+  never sends, deletes or changes anything already in the conversation.
 - **Follow-ups.** A short follow-up such as *and how do I disable it?* also
   searches with the previous Ask GeekCubo question. Normal Chat messages are
   never used for retrieval.

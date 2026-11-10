@@ -1629,8 +1629,36 @@ kbd {
   border: 1px solid var(--brand-soft);
   border-radius: var(--r-md);
 }
-.custom-provider-form .field { min-width: min(200px, 100%); }
+/* A grid, not a wrapping flex row: column widths no longer depend on the
+   help text, so typing (which reveals the slug hint) cannot reflow the
+   fields, and the Save button always keeps its own column. */
+.custom-provider-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
 .custom-provider-form > * { max-width: 100%; min-width: 0; }
+.custom-provider-form > .btn { justify-self: start; }
+.custom-provider-form .field-help[hidden] { display: none; }
+/* The static help and the live slug hint share one cell, so the cell is as
+   tall as the static help whether or not the hint is showing. The hint is
+   capped at two lines (full text in its tooltip). */
+.field-help-slot { display: grid; min-height: calc(12.5px * 1.5 * 2); align-content: start; }
+.field-help-slot > * { grid-area: 1 / 1; }
+.field-help-slot .is-replaced { visibility: hidden; }
+#custom-slug-hint {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+#custom-slug-hint[hidden] { display: none; }
+@media (min-width: 1100px) {
+  .custom-provider-form {
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr) minmax(0, 0.9fr) auto;
+  }
+  .custom-help, .custom-form-error { grid-column: 1 / -1; }
+  /* Line the button up with the inputs (label line + gap). */
+  .custom-provider-form > .btn { margin-top: calc(12px * 1.55 + 6px + 1.5px); }
+}
 .custom-provider-form .field-help { max-width: 100%; overflow-wrap: anywhere; }
 .custom-help { flex: 1 1 100%; margin: 0; }
 .custom-form-error { flex: 1 1 100%; margin: 0; color: var(--err-text); max-width: none; }
@@ -2775,11 +2803,22 @@ pre, .code-pre, .code-block { text-align: left; }
   position: relative;
   display: flex;
   height: calc(100dvh - 172px);
-  min-height: 460px;
+  /* Lower floor so short windows (~600px) keep the composer on screen. */
+  min-height: 340px;
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   background: var(--surface);
   overflow: hidden;
+}
+/* Size Chat from the space actually left under the top bar (whose height
+   varies with width and wrapping), not from a hardcoded offset: the page
+   column becomes exactly one viewport tall and the chat fills the rest.
+   The calc() heights above remain the fallback for browsers without :has(). */
+@supports selector(:has(*)) {
+  .content:has(#panel-chat.active) { height: 100dvh; }
+  .panels:has(> #panel-chat.active) { flex: 1 1 auto; min-height: 0; grid-template-rows: minmax(0, 1fr); }
+  #panel-chat.active { min-height: 0; }
+  #panel-chat.active > .chat-wrap { height: auto; flex: 1 1 auto; }
 }
 .chat-side {
   width: 264px;
@@ -2838,7 +2877,9 @@ pre, .code-pre, .code-block { text-align: left; }
 .chat-model-select .gc-select-input { height: 28px; font-size: var(--fs-sm); flex-basis: 90px; }
 .chat-thread {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--s-5) var(--s-5) var(--s-3);
   display: flex;
   flex-direction: column;
@@ -2985,7 +3026,9 @@ pre, .code-pre, .code-block { text-align: left; }
   flex: 1;
   resize: none;
   min-height: 44px;
-  max-height: 200px;
+  /* Never let a long draft take most of a short window from the thread. */
+  max-height: min(200px, 28dvh);
+  overflow-y: auto;
   padding: 11px 14px;
   border-radius: var(--r-md);
   border: 1px solid var(--border);
@@ -3448,7 +3491,14 @@ button.match-filter.is-on { border-color: currentColor; box-shadow: inset 0 0 0 
 .chat-mode-bar[hidden] { display: none; }
 .chat-mode-seg .seg-btn { display: inline-flex; align-items: center; gap: 6px; }
 .chat-mode-seg .seg-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+/* The active mode must be obvious in both themes, not just a shade lighter:
+   an accent outline plus bold text, and a visible keyboard focus ring. */
+.chat-mode-seg .seg-btn.active {
+  font-weight: 600; color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--accent), 0 1px 2px rgba(15, 23, 42, 0.08);
+}
 .chat-mode-seg #ch-mode-knowledge.active { color: var(--accent); }
+.chat-mode-seg .seg-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .chat-mode-note { font-size: var(--fs-xs); }
 .chat-composer.is-knowledge textarea { border-color: var(--accent); }
 .chat-mode-tag {
@@ -3472,3 +3522,7 @@ button.match-filter.is-on { border-color: currentColor; box-shadow: inset 0 0 0 
   .chat-mode-note { flex: 1 1 100%; }
   .chat-knowledge-id { display: block; }
 }
+.chat-table-wrap { max-width: 100%; overflow-x: auto; margin: 6px 0; }
+.chat-table { border-collapse: collapse; font-size: var(--fs-xs); min-width: 60%; }
+.chat-table th, .chat-table td { border: 1px solid var(--border); padding: 5px 9px; text-align: left; vertical-align: top; }
+.chat-table th { background: var(--surface-3); color: var(--ink); font-weight: 600; }
