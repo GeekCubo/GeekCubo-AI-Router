@@ -207,14 +207,16 @@ def test_reader_scrolled_up_is_not_yanked_to_the_bottom(browser, live_server):
     context.close()
 
 
-def test_short_normal_conversation_reserves_no_note_space(browser, live_server):
+def test_mode_bar_is_just_the_selector_in_both_modes(browser, live_server):
     context, page = _open_chat(browser, live_server, 1440, 900)
     _send(page, "hello")
-    assert page.is_hidden("#ch-mode-note")
     normal_bar = page.locator("#ch-mode-bar").bounding_box()["height"]
     page.click("#ch-mode-knowledge")
-    assert page.inner_text("#ch-mode-note") == "Answers grounded in GeekCubo documentation."
-    assert "0.1.0" in page.get_attribute("#ch-mode-note", "title")  # version stays reachable
+    # No explanatory note beside the selector; the version is in the tooltip.
+    assert page.locator("#ch-mode-note").count() == 0
+    assert "Answers grounded" not in page.inner_text("#ch-mode-bar")
+    assert "0.1.0" in page.get_attribute("#ch-mode-knowledge", "title")
+    assert page.locator("#ch-mode-bar").bounding_box()["height"] == normal_bar
     page.click("#ch-mode-normal")
     assert page.locator("#ch-mode-bar").bounding_box()["height"] == normal_bar
     # No dead space: the composer sits at the bottom of the chat card.
