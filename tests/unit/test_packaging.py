@@ -61,7 +61,7 @@ def test_cli_enforces_single_worker(monkeypatch) -> None:
 def test_wheel_carries_the_dashboard(pyproject: dict) -> None:
     """Drop this mapping and the wheel ships an API with no UI behind `/`."""
     wheel = pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]
-    assert wheel["packages"] == ["app", "packages", "geekcubo_connector"]
+    assert wheel["packages"] == ["app", "packages", "geekcubo_connector", "geekcubo_knowledge"]
     assert wheel["force-include"]["design"] == "app/design"
 
 

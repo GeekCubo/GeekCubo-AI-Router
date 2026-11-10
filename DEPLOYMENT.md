@@ -159,6 +159,14 @@ Audio is intentionally metadata-only: automatic speech transcription is not
 enabled, and the model is never told it heard something it did not.
 
 
+### GeekCubo Knowledge (Ask GeekCubo)
+
+The documentation index for **Ask GeekCubo** is built into the image
+(`geekcubo_knowledge/data/knowledge.sqlite3`), so it needs no extra container,
+port, database or network access, and it updates with every image rebuild.
+Set `KNOWLEDGE_ENABLED=false` in `.env` to hide the mode. See
+[GeekCubo Knowledge](docs/geekcubo-knowledge.md).
+
 ### Local AI Connect
 
 Local AI Connect lets the gateway route to models on your own machines. The

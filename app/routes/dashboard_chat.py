@@ -26,7 +26,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Literal
 
 import anyio
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -306,6 +306,8 @@ def _message_out(row: ChatMessage) -> dict:
         "search_query": row.search_query,
         "citations": json.loads(row.citations_json) if row.citations_json else None,
         "attachments": json.loads(row.attachments_json) if row.attachments_json else None,
+        "mode": row.chat_mode or "normal",
+        "knowledge": json.loads(row.knowledge_json) if row.knowledge_json else None,
     }
 
 
@@ -427,10 +429,17 @@ class SendMessageBody(BaseModel):
     # Explicit per-message retrieval request. Requires search mode manual/auto
     # in Settings → Chat → Web Search; otherwise it is rejected, not ignored.
     web_search: bool = False
+    # "normal" (default) or "knowledge" (Ask GeekCubo: answer from the
+    # bundled GeekCubo documentation). Per message, never sticky server-side.
+    mode: Literal["normal", "knowledge"] = "normal"
 
 
 class RegenerateBody(BaseModel):
-    """Regenerate sends the SAME stored question again — no `content`."""
+    """Regenerate sends the SAME stored question again — no `content`.
+
+    The mode comes from the stored question, not from the request, so a
+    regenerated answer is produced the same way as the original.
+    """
     model: str | None = Field(None, max_length=200)
     stream: bool = True
     temperature: float | None = Field(None, ge=0.0, le=2.0)
@@ -913,6 +922,7 @@ async def _persist_assistant_message(
     result: CompletionResult,
     requested_model: str,
     search_state: dict | None = None,
+    knowledge_state: dict | None = None,
 ) -> dict:
     """Write the assistant row after the engine call finished.
 
@@ -964,6 +974,8 @@ async def _persist_assistant_message(
             json.dumps(search_state["citations"])
             if (search_state or {}).get("citations") else None
         ),
+        chat_mode="knowledge" if knowledge_state else None,
+        knowledge_json=json.dumps(knowledge_state, separators=(",", ":")) if knowledge_state else None,
     )
     db.add(row)
     await db.execute(
@@ -1028,6 +1040,101 @@ def _blocking_result(response: JSONResponse) -> CompletionResult:
     out.provider = meta.get("provider")
     out.trace_id = meta.get("trace_id")
     return out
+
+
+# ── Ask GeekCubo ────────────────────────────────────────────────────────────
+
+def _join_system(system_prompt: str | None, knowledge_block: str | None) -> str | None:
+    """Combined system text, for context-budget accounting only."""
+    parts = [p for p in (system_prompt, knowledge_block) if p]
+    return "\n\n".join(parts) if parts else None
+
+
+def _system_messages(system_prompt: str | None, knowledge_block: str | None) -> list[dict]:
+    """The operator's system prompt first, the documentation block as its own
+    separate system message, so retrieved text never merges into (or
+    impersonates) the operator's instructions."""
+    out: list[dict] = []
+    if system_prompt:
+        out.append({"role": "system", "content": system_prompt})
+    if knowledge_block:
+        guide, separator, excerpts = knowledge_block.partition("<geekcubo_documentation>")
+        out.append({"role": "system", "content": guide})
+        if separator:
+            # Retrieved document text never receives system-level authority.
+            out.append({"role": "user", "content": separator + excerpts})
+    return out
+
+
+async def _previous_knowledge_question(
+    db: AsyncSession, conversation_id: str, *, before_seq: int | None = None
+) -> str | None:
+    """The most recent earlier question asked in Ask GeekCubo mode, if any."""
+    q = select(ChatMessage.content).where(
+        ChatMessage.conversation_id == conversation_id,
+        ChatMessage.is_deleted == 0,
+        ChatMessage.role == "user",
+        ChatMessage.chat_mode == "knowledge",
+    )
+    if before_seq is not None:
+        q = q.where(ChatMessage.seq < before_seq)
+    return (await db.execute(q.order_by(ChatMessage.seq.desc()).limit(1))).scalar_one_or_none()
+
+
+async def _knowledge_for(question: str, previous_question: str | None) -> tuple[dict, str | None]:
+    """Run retrieval for one Ask GeekCubo turn (off the event loop)."""
+    import asyncio
+
+    from app.knowledge_chat import build_context, knowledge_enabled
+
+    if not knowledge_enabled():
+        raise HTTPException(
+            status_code=422,
+            detail="Ask GeekCubo is turned off on this server (KNOWLEDGE_ENABLED=false).",
+        )
+    ctx = await asyncio.to_thread(build_context, question, previous_question)
+    if not ctx.available:
+        # Never let a plain answer pass as documentation-grounded.
+        raise HTTPException(
+            status_code=503,
+            detail=f"Ask GeekCubo is unavailable: {ctx.error} Switch to Normal Chat to continue.",
+        )
+    state = {
+        "docs_version": ctx.docs_version,
+        "query": ctx.query,
+        "sources": ctx.sources,
+        "matched": bool(ctx.sources),
+    }
+    return state, ctx.system_block
+
+
+def _knowledge_headers(state: dict) -> dict[str, str]:
+    import base64
+
+    return {
+        "x-geek-knowledge-sources": str(len(state.get("sources") or [])),
+        "x-geek-knowledge-version": str(state.get("docs_version") or ""),
+        "x-geek-knowledge-context": base64.b64encode(
+            json.dumps(state, ensure_ascii=True, separators=(",", ":")).encode()
+        ).decode(),
+    }
+
+
+@router.get("/knowledge/status")
+async def knowledge_status(_ac: AdminContext = Depends(get_admin_context)) -> dict:
+    """Whether Ask GeekCubo can be offered, and which docs it answers from."""
+    import asyncio
+
+    from app.knowledge_chat import knowledge_enabled
+    from geekcubo_knowledge.service import KnowledgeUnavailable, get_service
+
+    if not knowledge_enabled():
+        return {"enabled": False, "available": False, "reason": "disabled"}
+    try:
+        v = await asyncio.to_thread(lambda: get_service().version())
+    except KnowledgeUnavailable as err:
+        return {"enabled": True, "available": False, "reason": str(err)}
+    return {"enabled": True, "available": True, **v}
 
 
 @router.post("/conversations/{conversation_id}/messages")
@@ -1117,6 +1224,13 @@ async def send_message(
         )
         system_prompt = (system_prompt + "\n\n" if system_prompt else "") + render_context_block(outcome)
 
+    knowledge_state: dict | None = None
+    knowledge_block: str | None = None
+    if body.mode == "knowledge":
+        knowledge_state, knowledge_block = await _knowledge_for(
+            body.content, await _previous_knowledge_question(db, conversation.id)
+        )
+
     accepts_images = await _model_accepts_images(db, model)
     if attachment_service.has_image_parts(attachment_rows) and not accepts_images:
         # Rejecting is kinder than silently dropping the picture: the engine
@@ -1137,15 +1251,15 @@ async def send_message(
     history.append({"role": "user", "content": user_content})
     try:
         window = await _trim_history_to_budget(
-            model, history, system_prompt, eff_max, None, db=db
+            model, history, _join_system(system_prompt, knowledge_block), eff_max, None, db=db
         )
     except ContextBudgetError as err:
         raise HTTPException(status_code=422, detail=f"Context budget: {err}.") from err
-    engine_messages: list[dict] = []
-    if system_prompt:
-        engine_messages.append({"role": "system", "content": system_prompt})
+    engine_messages = _system_messages(system_prompt, knowledge_block)
     engine_messages.extend(window.messages)
     window_headers = _context_headers(window)
+    if knowledge_state is not None:
+        window_headers.update(_knowledge_headers(knowledge_state))
     if attachment_notices:
         for key, value in _attachment_headers(attachment_notices).items():
             window_headers[key] = value
@@ -1169,6 +1283,7 @@ async def send_message(
             seq=await _next_seq(db, conversation.id),
             role="user",
             content=stored_content,
+            chat_mode="knowledge" if knowledge_state is not None else None,
             attachments_json=(
                 json.dumps(attachment_refs, separators=(",", ":"))
                 if attachment_refs else None
@@ -1228,7 +1343,7 @@ async def send_message(
             await _persist_assistant_message(
                 db, conversation_id=conversation_id, workspace_id=ac.workspace_id,
                 result=result, requested_model=requested_model,
-                search_state=search_state,
+                search_state=search_state, knowledge_state=knowledge_state,
             )
 
         return await _proxy_engine_stream(
@@ -1240,7 +1355,7 @@ async def send_message(
     message = await _persist_assistant_message(
         db, conversation_id=conversation_id, workspace_id=ac.workspace_id,
         result=result, requested_model=requested_model,
-        search_state=search_state,
+        search_state=search_state, knowledge_state=knowledge_state,
     )
     return JSONResponse(
         status_code=response.status_code,
@@ -1283,11 +1398,22 @@ async def regenerate_message(
     ).scalars().all()
     # Rows arrive newest-first; soft-delete leading assistant rows up to the
     # most recent user message.
+    last_user = None
     for row in rows:
         if row.role == "user":
+            last_user = row
             break
         row.is_deleted = 1
     await db.commit()
+
+    # Regenerate in the same mode as the stored question.
+    knowledge_state: dict | None = None
+    knowledge_block: str | None = None
+    if last_user is not None and last_user.chat_mode == "knowledge":
+        knowledge_state, knowledge_block = await _knowledge_for(
+            last_user.content,
+            await _previous_knowledge_question(db, conversation.id, before_seq=last_user.seq),
+        )
 
     system_prompt = conversation.system_prompt if conversation.system_prompt is not None else settings.system_prompt
     eff_max = body.max_tokens if body.max_tokens else settings.max_tokens
@@ -1299,18 +1425,18 @@ async def regenerate_message(
                 multimodal_last_user=True,
                 allow_images=await _model_accepts_images(db, model),
             ),
-            system_prompt, eff_max, None, db=db,
+            _join_system(system_prompt, knowledge_block), eff_max, None, db=db,
         )
     except ContextBudgetError as err:
         raise HTTPException(status_code=422, detail=f"Context budget: {err}.") from err
-    engine_messages: list[dict] = []
-    if system_prompt:
-        engine_messages.append({"role": "system", "content": system_prompt})
+    engine_messages = _system_messages(system_prompt, knowledge_block)
     engine_messages.extend(window.messages)
     if not any(m["role"] == "user" for m in engine_messages):
         raise HTTPException(status_code=409, detail="No user message to regenerate from.")
 
     window_headers = _context_headers(window)
+    if knowledge_state is not None:
+        window_headers.update(_knowledge_headers(knowledge_state))
 
     requested_model = model
     trace_id = str(uuid.uuid4())
@@ -1336,6 +1462,7 @@ async def regenerate_message(
         message = await _persist_assistant_message(
             db, conversation_id=conversation.id, workspace_id=ac.workspace_id,
             result=result, requested_model=requested_model,
+            knowledge_state=knowledge_state,
         )
         return JSONResponse(
             status_code=response.status_code,
@@ -1349,6 +1476,7 @@ async def regenerate_message(
         await _persist_assistant_message(
             db, conversation_id=conversation_id, workspace_id=ac.workspace_id,
             result=result, requested_model=requested_model,
+            knowledge_state=knowledge_state,
         )
 
     return await _proxy_engine_stream(

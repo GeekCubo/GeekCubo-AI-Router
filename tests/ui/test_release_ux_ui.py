@@ -397,7 +397,8 @@ def test_acceptance_copy_icon_copies_full_key_after_refresh(browser, live_server
 
     pg.evaluate("navigator.clipboard.writeText('sentinel')")
     row.locator(".copy-key").click()
-    pg.wait_for_function("async () => (await navigator.clipboard.readText()) !== 'sentinel'", timeout=10_000)
+    pg.wait_for_function("async expected => (await navigator.clipboard.readText()) === expected",
+                         arg=created, timeout=10_000)
     clip = pg.evaluate("navigator.clipboard.readText()")
 
     assert clip == created, "the icon must copy the full usable key, not a masked identifier"

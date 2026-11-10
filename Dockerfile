@@ -43,6 +43,8 @@ COPY scripts/ scripts/
 # imports it, but including it lets operators run `python -m geekcubo_connector`
 # from the image when a model host is colocated with the gateway.
 COPY geekcubo_connector/ geekcubo_connector/
+# Prebuilt documentation index for Ask GeekCubo (read-only SQLite FTS5 file).
+COPY geekcubo_knowledge/ geekcubo_knowledge/
 
 # The account name is user-visible in `ps`/`docker exec`; the /data path and
 # ownership are what actually matter for existing volumes.

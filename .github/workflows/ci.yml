@@ -29,7 +29,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: pip install -e ".[dev]"
+      - run: pip install -e ".[dev,mcp,ui]"
+      - name: browser test runtime
+        run: python -m playwright install --with-deps chromium
       - name: ruff
         run: ruff check .
         continue-on-error: false
@@ -39,6 +41,8 @@ jobs:
         run: python -m unittest design.test_i18n_unittest
       - name: installer syntax
         run: bash -n install.sh
+      - name: documentation index is current
+        run: python -m geekcubo_knowledge check
       - name: pytest
         run: PYTHONPATH=. pytest -v --tb=short
 

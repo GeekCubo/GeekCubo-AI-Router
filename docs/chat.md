@@ -37,6 +37,16 @@ notes when older messages were omitted, so a truncated answer is never mistaken
 for a model failure. Token counts are estimates (about four characters per
 token, plus a small per-message overhead) and the budget keeps a safety margin.
 
+## Ask GeekCubo
+
+Above the message box, **Normal Chat | Ask GeekCubo** chooses how the next
+message is answered. *Ask GeekCubo* answers questions about GeekCubo itself
+from the documentation bundled with this release and lists the sections it
+used under **Sources**; *Normal Chat* never receives documentation. The mode
+is recorded per message, and new conversations start in Normal Chat. This is
+not web search: it only searches GeekCubo's own documentation. See
+[GeekCubo Knowledge](geekcubo-knowledge.md).
+
 ## Web search (optional, off by default)
 
 Chat can search the web before answering and cite the pages it used. Configure

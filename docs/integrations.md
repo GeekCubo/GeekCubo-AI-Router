@@ -88,6 +88,25 @@ Both formats were verified with OpenCode 2.2.6 for text generation (streamed
 chat completions). Agentic tool calling additionally depends on the model
 GeekCubo routes to; a successful text request does not prove it.
 
+### Documentation lookup tools (MCP)
+
+Separately from the provider above, OpenCode can search GeekCubo's
+documentation through the local, read-only `geekcubo-mcp` server. It needs no
+GeekCubo server and no key, and works with whatever model OpenCode uses:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "geekcubo-knowledge": { "type": "local", "command": ["geekcubo-mcp", "serve"] }
+    }
+  }
+}
+```
+
+Installation and the full tool reference: [GeekCubo Knowledge](geekcubo-knowledge.md#geekcubo-mcp-for-opencode-and-other-mcp-clients).
+
 ## Native protocol endpoints (Anthropic + Gemini)
 
 GeekCubo speaks three inbound protocols against one routing pipeline. Clients
