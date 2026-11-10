@@ -47,10 +47,9 @@ never read, whatever files exist in the directory.
 
 ## Ask GeekCubo in Chat
 
-Open **Chat** and choose **Ask GeekCubo** above the message box. The box
-shows *Answers grounded in GeekCubo documentation* (hover it for the
-documentation version); ask as usual,
-for example how a routing strategy behaves or how to set up a feature.
+Open **Chat** and choose **Ask GeekCubo** above the message box (hover it
+for the documentation version), then ask as usual, for example how a
+routing strategy behaves or how to set up a feature.
 
 The answer comes from the model selected in the header, with the relevant
 documentation sections attached to the request. Below the answer, **Sources**

@@ -3499,7 +3499,6 @@ button.match-filter.is-on { border-color: currentColor; box-shadow: inset 0 0 0 
 }
 .chat-mode-seg #ch-mode-knowledge.active { color: var(--accent); }
 .chat-mode-seg .seg-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.chat-mode-note { font-size: var(--fs-xs); }
 .chat-composer.is-knowledge textarea { border-color: var(--accent); }
 .chat-mode-tag {
   align-self: flex-end; font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em;
@@ -3519,7 +3518,6 @@ button.match-filter.is-on { border-color: currentColor; box-shadow: inset 0 0 0 
 .chat-knowledge-sources.is-empty { color: var(--ink-3); }
 @media (max-width: 560px) {
   .chat-mode-bar { padding: 8px 10px 0; }
-  .chat-mode-note { flex: 1 1 100%; }
   .chat-knowledge-id { display: block; }
 }
 .chat-table-wrap { max-width: 100%; overflow-x: auto; margin: 6px 0; }
