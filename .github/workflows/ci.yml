@@ -1,27 +1,14 @@
 name: ci
 
 on:
+  # No path filters: `tests`, `package` and `docker smoke` are required status
+  # checks on main, and a filtered-out workflow never reports them, which would
+  # leave documentation-only pull requests blocked forever.
+  # `pull_request` (not `pull_request_target`) runs fork code with a read-only
+  # token and no repository secrets.
   push:
     branches: [main]
-    paths:
-      - "app/**"
-      - "packages/**"
-      - "tests/**"
-      - "scripts/**"
-      - "design/**"
-      - "pyproject.toml"
-      - "Dockerfile"
-      - ".github/workflows/ci.yml"
   pull_request:
-    paths:
-      - "app/**"
-      - "packages/**"
-      - "tests/**"
-      - "scripts/**"
-      - "design/**"
-      - "pyproject.toml"
-      - "Dockerfile"
-      - ".github/workflows/ci.yml"
   workflow_dispatch:
 
 # Read-only token for every job: CI never writes to the repository.

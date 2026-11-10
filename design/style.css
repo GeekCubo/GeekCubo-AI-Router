@@ -1097,7 +1097,9 @@ tbody tr.row-in { animation: row-in 320ms var(--ease) both; }
 }
 .bar-row {
   display: grid;
-  grid-template-columns: 200px 1fr 130px;
+  /* Label column ~10% wider than before so full model ids fit; the bar takes
+     the remaining space minus that. */
+  grid-template-columns: minmax(200px, 22%) minmax(0, 1fr) 130px;
   gap: var(--s-3);
   align-items: center;
   font-size: 13px;
@@ -3430,3 +3432,6 @@ button.match-filter.is-on { border-color: currentColor; box-shadow: inset 0 0 0 
 .keys-table .key-prefix-cell { display: inline-flex; max-width: 100%; min-width: 0; flex-wrap: nowrap; }
 .keys-table .key-prefix-cell code { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .keys-table { min-width: 860px; }
+
+/* Copy icon on a key row: copies the full key; greyed out for hash-only keys. */
+.keys-table .key-prefix-cell .copy-key.is-unavailable { opacity: 0.3; cursor: help; }

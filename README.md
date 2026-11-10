@@ -318,7 +318,8 @@ Enrollment codes are single-use and expire after 30 minutes; a machine gets noth
 ## Security and deployment
 
 - **Loopback by default.** Compose publishes the dashboard on `127.0.0.1:8787` only; the administrator login is not meant to face the internet directly. For remote use, open an SSH tunnel (`ssh -L 8787:127.0.0.1:8787 <user>@<server>`) or put a TLS reverse proxy in front, set `TRUST_PROXY_HEADERS=true` and set `PUBLIC_BASE_URL` to your own address (for example `https://api.example.com`). See [DEPLOYMENT.md](DEPLOYMENT.md).
-- **Generated secrets.** On first start GeekCubo creates `CREDENTIAL_ENCRYPTION_KEY` and `API_KEY_PEPPER` in `.geekcubo-secrets` (mode `0600`) next to the database. Without them stored provider keys cannot be decrypted.
+- **Generated secrets.** On first start GeekCubo creates `CREDENTIAL_ENCRYPTION_KEY`, `API_KEY_PEPPER` and `API_KEY_RECOVERY_KEY` in `.geekcubo-secrets` (mode `0600`) next to the database. Without them stored provider keys cannot be decrypted.
+- **Copy a key any time.** Authentication uses a hash; an encrypted copy (dedicated `API_KEY_RECOVERY_KEY`) lets the administrator copy the full key later with the copy icon in Settings → API Keys. See [Security](docs/security.md#copying-a-key-later).
 - **Data and backups.** Everything lives in the `geekcubo-data` volume (`/data`): the database, attachments and the secrets file. Back it up with the service stopped (`docker compose cp api:/data ./geekcubo-data-backup`). Updates and `./install.sh` keep the volume; **never run `docker compose down -v`**, which deletes it.
 - **Credentials.** `sk-geek-*` keys are stored hash-only, provider keys encrypted; dashboard sessions are HttpOnly, `SameSite=Lax`, `Secure` over HTTPS and CSRF-protected. `sk-geek-*` keys cannot open the dashboard, and a dashboard session cannot call the inference API.
 

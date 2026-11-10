@@ -301,6 +301,13 @@ async def ensure_auth_columns(engine) -> None:
             await _apply_ddl(
                 conn, "ALTER TABLE api_keys ADD COLUMN expires_at TIMESTAMP"
             )
+        # Opt-in recoverable keys. NULL for every existing key, which keeps
+        # them hash-only exactly as before. BLOB on SQLite, BYTEA on Postgres.
+        if "encrypted_secret" not in cols:
+            blob = "BYTEA" if conn.dialect.name == "postgresql" else "BLOB"
+            await _apply_ddl(
+                conn, f"ALTER TABLE api_keys ADD COLUMN encrypted_secret {blob}"
+            )
 
         # "Remember me" sessions. Existing rows default to FALSE, i.e. they keep
         # exactly the policy they were issued under.

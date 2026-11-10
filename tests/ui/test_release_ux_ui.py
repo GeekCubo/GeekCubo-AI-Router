@@ -240,20 +240,6 @@ def test_rotate_shows_new_key_with_copy_and_update_warning(browser, live_server)
     ctx.close()
 
 
-def test_copy_identifier_copies_only_the_masked_prefix(browser, live_server):
-    ctx = _ctx(browser, live_server, 390, 844)
-    pg = ctx.new_page()
-    _open_keys(pg, live_server)
-    secret = _create(pg, "ident-copy")
-    pg.click("#new-key-dismiss")
-    pg.evaluate("navigator.clipboard.writeText('sentinel')")
-    pg.locator("#keys-table tbody tr", has_text="ident-copy").first.locator(".copy-prefix").click()
-    pg.wait_for_function("async () => (await navigator.clipboard.readText()) !== 'sentinel'")
-    copied = pg.evaluate("navigator.clipboard.readText()")
-    assert "...." in copied and copied != secret and len(copied) < 24
-    ctx.close()
-
-
 def test_revoked_keys_are_filtered_and_can_be_archived(browser, live_server):
     ctx = _ctx(browser, live_server)
     pg = ctx.new_page()
@@ -369,4 +355,84 @@ def test_provider_empty_state_names_standard_providers(browser, live_server):
     assert "No standard-provider keys configured" in text
     assert "Custom OpenAI-compatible providers" in text
     assert "No provider keys yet" not in pg.inner_text("body")
+    ctx.close()
+
+
+
+# ─────────────────────── copy a stored key from its row ───────────────────────
+
+def _infer_status(base_url: str, key: str) -> int:
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(f"{base_url}/v1/models", headers={"Authorization": f"Bearer {key}"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        return e.code
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+def test_acceptance_copy_icon_copies_full_key_after_refresh(browser, live_server, width, height):
+    """Create → dismiss → refresh → click the copy icon → use the clipboard value."""
+    ctx = _ctx(browser, live_server, width, height)
+    pg = ctx.new_page()
+    _open_keys(pg, live_server)
+    name = f"copy-later-{width}"
+    created = _create(pg, name)
+    pg.click("#new-key-dismiss")
+    assert created not in pg.content()
+
+    pg.reload(wait_until="domcontentloaded")
+    pg.wait_for_selector("#app-shell:not([hidden])", timeout=15_000)
+    pg.click('#tabs [data-tab="keys"]')
+    row = pg.locator("#keys-table tbody tr", has_text=name).first
+    row.wait_for(timeout=15_000)
+    assert created not in pg.content()
+    # No settings panel, no extra buttons: just the icon next to the prefix.
+    assert pg.locator("#key-recovery").count() == 0
+    assert row.locator("button", has_text="Copy API key").count() == 0
+    assert row.locator("button", has_text="Rotate to enable copying").count() == 0
+
+    pg.evaluate("navigator.clipboard.writeText('sentinel')")
+    row.locator(".copy-key").click()
+    pg.wait_for_function("async () => (await navigator.clipboard.readText()) !== 'sentinel'", timeout=10_000)
+    clip = pg.evaluate("navigator.clipboard.readText()")
+
+    assert clip == created, "the icon must copy the full usable key, not a masked identifier"
+    assert clip.startswith("sk-geek-") and "...." not in clip and len(clip) == 40
+    assert _infer_status(live_server.base_url, clip) == 200
+    assert clip not in pg.content()
+
+    con = sqlite3.connect(live_server.db_url.split("///", 1)[1])
+    dump = "\n".join(con.iterdump())
+    con.close()
+    assert clip not in dump
+    ctx.close()
+
+
+def test_hash_only_key_icon_explains_instead_of_copying_the_prefix(browser, live_server):
+    live_server.admin_login()  # an earlier test revoked every session
+    status, legacy = live_server.admin("POST", "/v1/keys", {"name": "legacy-hash-only"})
+    assert status == 201
+    con = sqlite3.connect(live_server.db_url.split("///", 1)[1])
+    con.execute("update api_keys set encrypted_secret=NULL where id=?", (legacy["id"],))
+    con.commit()
+    con.close()
+
+    ctx = _ctx(browser, live_server)
+    pg = ctx.new_page()
+    _open_keys(pg, live_server)
+    row = pg.locator("#keys-table tbody tr", has_text="legacy-hash-only").first
+    row.wait_for(timeout=10_000)
+    icon = row.locator(".copy-key")
+    assert "is-unavailable" in icon.get_attribute("class")
+    assert "Rotate it once" in icon.get_attribute("aria-label")
+    pg.evaluate("navigator.clipboard.writeText('sentinel')")
+    icon.click(force=True)  # aria-disabled; clicking explains instead of copying
+    pg.wait_for_selector("text=Rotate it once to get a copyable key", timeout=5_000)
+    assert pg.evaluate("navigator.clipboard.readText()") == "sentinel"
+    # Nothing was rotated or revoked automatically.
+    assert _infer_status(live_server.base_url, legacy["api_key"]) == 200
     ctx.close()

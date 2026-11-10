@@ -23,6 +23,7 @@ def _clear_env_and_settings(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv(sp._KEY_VAR, raising=False)
     monkeypatch.delenv(sp._PEPPER_VAR, raising=False)
+    monkeypatch.delenv(sp._RECOVERY_VAR, raising=False)
     from app import config as cfg
 
     cfg.get_settings.cache_clear()
@@ -273,3 +274,80 @@ def test_atomic_write_never_overwrites_and_leaves_no_temp(tmp_path):
     assert sp._read_secrets_file(path)[sp._KEY_VAR] == "a" * 64
     assert (path.stat().st_mode & 0o777) == 0o600
     assert [p.name for p in tmp_path.iterdir()] == [sp.SECRETS_FILENAME]
+
+
+def _engine_with_tables(url):
+    import asyncio
+
+    import packages.db.models  # noqa: F401
+    from packages.db.engine import build_engine
+    from packages.db.models.base import Base
+
+    engine = build_engine(url)
+
+    async def _mk():
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+    asyncio.run(_mk())
+    return engine
+
+
+def test_upgrade_adds_recovery_key_without_touching_existing_secrets(tmp_path, monkeypatch):
+    """A secrets file from an older release gains API_KEY_RECOVERY_KEY only."""
+    import asyncio
+
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path}/geekcubo.db")
+    from app import config as cfg
+
+    cfg.get_settings.cache_clear()
+    settings = cfg.get_settings()
+    path = tmp_path / sp.SECRETS_FILENAME
+    sp._atomic_write_secrets(path, {sp._KEY_VAR: "ab" * 32, sp._PEPPER_VAR: "cd" * 32})
+    before = path.read_text()
+
+    engine = _engine_with_tables(settings.database_url)
+    try:
+        asyncio.run(sp.provision_secrets(settings, engine))
+    finally:
+        asyncio.run(engine.dispose())
+
+    after = path.read_text()
+    assert after.startswith(before)  # existing lines unchanged, in place
+    values = sp._read_secrets_file(path)
+    assert values[sp._KEY_VAR] == "ab" * 32 and values[sp._PEPPER_VAR] == "cd" * 32
+    assert len(values[sp._RECOVERY_VAR]) == 64
+    assert os.environ[sp._RECOVERY_VAR] == values[sp._RECOVERY_VAR]
+    assert (path.stat().st_mode & 0o777) == 0o600
+
+
+def test_missing_recovery_key_with_recoverable_rows_fails_safely(tmp_path, monkeypatch):
+    import asyncio
+
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path}/geekcubo.db")
+    from app import config as cfg
+
+    cfg.get_settings.cache_clear()
+    settings = cfg.get_settings()
+    # An install whose secrets file lost its recovery key.
+    path = tmp_path / sp.SECRETS_FILENAME
+    sp._atomic_write_secrets(path, {sp._KEY_VAR: "ef" * 32, sp._PEPPER_VAR: "fe" * 32})
+    engine = _engine_with_tables(settings.database_url)
+
+    async def _seed():
+        from sqlalchemy import text
+
+        async with engine.begin() as conn:
+            await conn.execute(text("insert into workspaces (id, name, slug) values ('default', 'd', 'd')"))
+            await conn.execute(text(
+                "insert into api_keys (id, workspace_id, name, key_hash, key_prefix, is_deleted, "
+                "spent_microcents, encrypted_secret) values "
+                "('k1', 'default', 'k', 'h', 'sk-geek-....0000', 0, 0, x'01')"))
+
+    try:
+        asyncio.run(_seed())
+        with pytest.raises(RuntimeError, match="API_KEY_RECOVERY_KEY"):
+            asyncio.run(sp.provision_secrets(settings, engine))
+    finally:
+        asyncio.run(engine.dispose())
+    assert sp._RECOVERY_VAR not in sp._read_secrets_file(path)

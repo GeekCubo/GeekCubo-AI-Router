@@ -17,18 +17,22 @@ listing never shows a credential the middleware would reject.
 
 from __future__ import annotations
 
+import time
+from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app._time_util import iso_utc
 from app.deps import DEFAULT_WORKSPACE_ID, get_admin_session, get_db
+from packages.auth import key_recovery
 from packages.auth.hashing import generate_api_key
 from packages.auth.sessions import SessionRecord
 from packages.db.models.api_key import ApiKey
+from packages.db.models.key_recovery import KeyRecoveryAudit
 
 router = APIRouter(prefix="/v1/keys", tags=["keys"])
 
@@ -122,6 +126,8 @@ def _key_public(r: ApiKey) -> dict:
         "created_at": iso_utc(r.created_at),
         "expires_at": iso_utc(expires_at),
         "expired": expired,
+        # Whether an encrypted copy exists. Never the copy itself.
+        "recoverable": r.encrypted_secret is not None,
     }
 
 
@@ -139,6 +145,103 @@ async def _get_key(db: AsyncSession, key_id: str, workspace_id: str) -> ApiKey:
         raise HTTPException(status_code=404, detail="Key not found")
     return row
 
+
+# ── copyable keys ───────────────────────────────────────────────────────────
+#
+# New and rotated keys also get an AES-256-GCM copy sealed with the dedicated
+# API_KEY_RECOVERY_KEY, so the administrator can copy the full key again later
+# from its row. Authentication is unchanged and never reads that copy.
+# Retrieval needs an administrator session + CSRF token (middleware, POST),
+# is rate limited per session, is never cached, and every attempt is written
+# to key_recovery_audit without the secret. Keys created before this existed
+# were stored hash-only and cannot be copied.
+
+_RETRIEVE_LIMIT = 30          # retrievals per session...
+_RETRIEVE_WINDOW_S = 10 * 60  # ...per 10 minutes
+_retrievals: dict[str, deque[float]] = defaultdict(deque)
+
+
+def reset_recovery_rate_limits() -> None:
+    """Test hook."""
+    _retrievals.clear()
+
+
+def _hit(bucket: dict[str, deque[float]], key: str, limit: int, window_s: int) -> bool:
+    """Record an event; return False when the window is already full."""
+    now = time.monotonic()
+    q = bucket[key]
+    while q and now - q[0] > window_s:
+        q.popleft()
+    if len(q) >= limit:
+        return False
+    q.append(now)
+    return True
+
+
+def _peer(request: Request) -> str | None:
+    from app.routes.auth import _client_ip
+
+    return (_client_ip(request) or "")[:64] or None
+
+
+def _seal_if_possible(row: ApiKey, full_key: str) -> None:
+    """Store an encrypted copy when a recovery key is configured.
+
+    Without API_KEY_RECOVERY_KEY (for example secrets managed only in .env on
+    an install that never set it) the key is simply stored hash-only.
+    """
+    if key_recovery.recovery_available():
+        row.encrypted_secret = key_recovery.seal_api_key(full_key, row.id)
+
+
+async def _audit(db: AsyncSession, outcome: str, *, record: SessionRecord,
+                 request: Request, key: ApiKey) -> None:
+    db.add(KeyRecoveryAudit(
+        event="retrieve",
+        outcome=outcome,
+        api_key_id=key.id,
+        key_prefix=key.key_prefix,
+        session_id=record.session_id,
+        ip_address=_peer(request),
+    ))
+    await db.commit()
+
+
+@router.post("/{key_id}/reveal")
+async def reveal_key(
+    key_id: str,
+    request: Request,
+    response: Response,
+    record: SessionRecord = Depends(get_admin_session),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return the full secret of a copyable key. POST so CSRF applies."""
+    _no_store(response)
+    row = await _get_key(db, key_id, DEFAULT_WORKSPACE_ID)
+
+    async def deny(status: int, outcome: str, detail: str):
+        await _audit(db, outcome, record=record, request=request, key=row)
+        raise HTTPException(status_code=status, detail=detail)
+
+    if not _hit(_retrievals, record.session_id, _RETRIEVE_LIMIT, _RETRIEVE_WINDOW_S):
+        await deny(429, "rate_limited", "Too many key copies. Wait a few minutes.")
+    usable = row.is_active and row.revoked_at is None
+    if usable and row.expires_at is not None:
+        exp = row.expires_at if row.expires_at.tzinfo else row.expires_at.replace(tzinfo=timezone.utc)
+        usable = exp > datetime.now(timezone.utc)
+    if not usable:
+        await deny(409, "not_active", "This key is revoked or expired.")
+    if row.encrypted_secret is None:
+        await deny(409, "not_recoverable",
+                   "This key was created before keys could be copied, so only its hash "
+                   "is stored. Rotate it once to get a copyable key.")
+    try:
+        secret = key_recovery.open_api_key(row.encrypted_secret, row.id)
+    except Exception:
+        await deny(500, "decrypt_failed",
+                   "The stored copy could not be decrypted. Check API_KEY_RECOVERY_KEY.")
+    await _audit(db, "ok", record=record, request=request, key=row)
+    return {"id": row.id, "api_key": secret}
 
 @router.get("")
 async def list_keys(
@@ -192,6 +295,8 @@ async def create_key(
         expires_at=expires_at,
     )
     db.add(row)
+    await db.flush()  # assigns row.id, which the ciphertext is bound to
+    _seal_if_possible(row, full_key)
     await db.commit()
     await db.refresh(row)
 
@@ -252,6 +357,8 @@ async def rotate_key(
         expires_at=original.expires_at,
     )
     db.add(replacement)
+    await db.flush()
+    _seal_if_possible(replacement, full_key)
     if body.revoke_original:
         original.is_active = False
         original.revoked_at = datetime.now(timezone.utc)
@@ -274,6 +381,9 @@ async def revoke_key(
     row = await _get_key(db, key_id, DEFAULT_WORKSPACE_ID)
     row.is_active = False
     row.revoked_at = datetime.now(timezone.utc)
+    # A revoked key can never be used again, so its recoverable copy has no
+    # purpose. Destroy it rather than keep a dead secret around.
+    row.encrypted_secret = None
     await db.commit()
     return Response(status_code=204)
 
@@ -306,5 +416,7 @@ async def archive_key(
             detail="Only revoked or expired keys can be archived. Revoke the key first.",
         )
     row.is_deleted = 1
+    row.encrypted_secret = None
     await db.commit()
     return Response(status_code=204)
+

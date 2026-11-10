@@ -1098,6 +1098,8 @@ printf '  %s\n' "$(compose_display ps)"
 printf '  %s\n' "$(compose_display logs --tail=100 api)"
 printf '\nRerunning ./install.sh is safe: it preserves the data volume, .env, administrator,\n'
 printf 'provider credentials, encryption secrets and API keys.\n'
+printf 'Back up the data volume including /data/.geekcubo-secrets: it holds the keys\n'
+printf 'that decrypt provider credentials and the copyable copies of API keys.\n'
 printf '\nTo add or remove web search later without reinstalling:\n'
 printf '  Enable : docker compose --profile search up -d\n'
 printf '  Disable: docker compose --profile search down\n'
