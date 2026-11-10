@@ -100,9 +100,9 @@ behind.
 
 ## How changes are reviewed
 
-1. **CI runs automatically** on every pull request: lint, dashboard and
-   installer syntax checks, localization checks, the full test suite, a wheel
-   build and a Docker smoke test. CI for pull requests from forks runs with a
+1. **CI runs automatically** on every pull request, including documentation-only
+   ones: lint, dashboard and installer syntax checks, localization checks, the
+   full test suite, a wheel build and a Docker smoke test. CI for pull requests from forks runs with a
    read-only token and **no repository secrets**.
 2. **A maintainer reviews** the change for correctness, security, tests,
    documentation and scope. At least one approving review is required.
