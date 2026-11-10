@@ -900,3 +900,38 @@ def test_provider_bulk_toolbar_wraps_without_overlap(page, mock_upstream, width,
             )
             assert not overlaps, (a, b)
     assert data["docWidth"] <= data["viewport"] + 1, data["overflow"]
+
+
+_FORM_GEOMETRY = """() => { const f = document.querySelector('#custom-provider-form').getBoundingClientRect();
+  return ['#custom-provider-name', '#custom-base-url', '#custom-api-key', '#custom-provider-form button[type=submit]']
+    .map(s => { const r = document.querySelector(s).getBoundingClientRect();
+      return [Math.round(r.x), Math.round(r.y - f.y), Math.round(r.width), Math.round(r.height)]; })
+    .concat([[Math.round(f.height)]]); }"""
+
+
+@pytest.mark.parametrize("width", [1440, 1280, 1024, 768, 390])
+def test_typing_a_provider_name_does_not_move_the_form(browser, live_server, width):
+    """Revealing the slug hint while typing must not reflow the fields, and on
+    desktop the three fields and Save provider share one row."""
+    from tests.ui.conftest import sign_in
+
+    context = browser.new_context(viewport={"width": width, "height": 900})
+    pg = context.new_page()
+    sign_in(pg, live_server.base_url, path="/providers")
+    pg.wait_for_selector("#panel-providers.active", timeout=15_000)
+    pg.select_option("#provider-name", "__custom__")
+    pg.wait_for_selector("#custom-provider-form:not([hidden])")
+    before = pg.evaluate(_FORM_GEOMETRY)
+    pg.type("#custom-provider-name", "Orca Router Test With A Much Longer Provider Name")
+    assert pg.is_visible("#custom-slug-hint")
+    assert pg.evaluate(_FORM_GEOMETRY) == before
+    if width >= 1280:
+        name, url, key, save = before[:4]
+        assert name[1] == url[1] == key[1], "fields should share one row"
+        assert save[0] + save[2] <= pg.evaluate(
+            "document.querySelector('#custom-provider-form').getBoundingClientRect().right") + 1
+        assert abs((save[1] + save[3] / 2) - (name[1] + name[3] / 2)) <= 4, "Save aligns with the inputs"
+    pg.fill("#custom-provider-name", "")
+    pg.dispatch_event("#custom-provider-name", "input")
+    assert pg.evaluate(_FORM_GEOMETRY) == before
+    context.close()

@@ -397,9 +397,14 @@ def test_acceptance_copy_icon_copies_full_key_after_refresh(browser, live_server
 
     pg.evaluate("navigator.clipboard.writeText('sentinel')")
     row.locator(".copy-key").click()
-    pg.wait_for_function("async expected => (await navigator.clipboard.readText()) === expected",
-                         arg=created, timeout=10_000)
-    clip = pg.evaluate("navigator.clipboard.readText()")
+    # wait_for_function does not await an async predicate (a pending Promise
+    # is truthy), so poll the asynchronous clipboard explicitly.
+    clip = None
+    for _ in range(50):
+        clip = pg.evaluate("navigator.clipboard.readText()")
+        if clip != "sentinel":
+            break
+        pg.wait_for_timeout(200)
 
     assert clip == created, "the icon must copy the full usable key, not a masked identifier"
     assert clip.startswith("sk-geek-") and "...." not in clip and len(clip) == 40

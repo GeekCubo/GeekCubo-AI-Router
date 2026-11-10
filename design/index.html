@@ -587,8 +587,10 @@
               <label class="field flex-grow">
                 <span class="field-label" data-i18n="ui.provider_name">Provider Name</span>
                 <input id="custom-provider-name" type="text" placeholder="My AI Provider" autocomplete="off" spellcheck="false" required>
-                <span class="field-help" data-i18n="ui.display_name_a_unique_internal_slug_is_d">Display name. A unique internal slug is derived from it automatically.</span>
-                <span class="field-help" id="custom-slug-hint" hidden></span>
+                <span class="field-help-slot">
+                  <span class="field-help" id="custom-name-help" data-i18n="ui.display_name_a_unique_internal_slug_is_d">Display name. A unique internal slug is derived from it automatically.</span>
+                  <span class="field-help" id="custom-slug-hint" aria-live="polite" hidden></span>
+                </span>
               </label>
               <label class="field flex-grow">
                 <span class="field-label" data-i18n="ui.api_base_url">API Base URL</span>
