@@ -54,6 +54,7 @@ Edit `.env`. The values that matter in production:
 
 | Variable | Why |
 |---|---|
+| `API_KEY_RECOVERY_KEY` | Seals the encrypted copy that lets you copy an `sk-geek-*` key again later. Generated automatically next to the database; set it yourself on Postgres. Back it up with the data. |
 | `CREDENTIAL_ENCRYPTION_KEY` | Encrypts provider keys at rest. With SQLite it is generated automatically on first start and saved in `/data/.geekcubo-secrets`; set it yourself only on Postgres or to supply your own value (`openssl rand -hex 32`). Either way, **back it up**: losing it means stored provider keys cannot be decrypted. |
 | `ALLOW_INSECURE_DEV_KEY` | Must be **unset/false** in production. |
 | `TRUST_PROXY_HEADERS` | `true` behind Nginx, so session cookies are marked `Secure`. |
@@ -356,6 +357,12 @@ tar czf "geekcubo-backup-$(date +%F).tar.gz" "./geekcubo-data-$(date +%F)"
 The `/data` directory now also contains the auto-generated `.geekcubo-secrets`
 file (see "Security and encryption" in the README). It is part of the backup,
 so the `docker compose cp api:/data` step above captures it automatically.
+It holds `CREDENTIAL_ENCRYPTION_KEY`, `API_KEY_PEPPER` and
+`API_KEY_RECOVERY_KEY`. Restore the file together with the database: without
+`API_KEY_RECOVERY_KEY`, API keys still authenticate but can no longer be
+copied, and GeekCubo will not start until the original is restored. A backup
+containing both the database and this file can decrypt stored keys — keep
+backups encrypted and access-controlled.
 
 ```bash
 # Restore

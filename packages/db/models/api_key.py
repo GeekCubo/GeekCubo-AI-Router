@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, String
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, LargeBinary, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from packages.db.models.base import Base, SoftDeleteMixin, TimestampMixin, UUIDMixin
@@ -36,3 +36,8 @@ class ApiKey(Base, UUIDMixin, TimestampMixin, SoftDeleteMixin):
     # "never expires" — the migration adds the column with NULL so upgrading
     # cannot retroactively invalidate a key that is in use.
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Copyable keys. AES-256-GCM ciphertext of the full key, sealed with the
+    # dedicated API_KEY_RECOVERY_KEY and bound to this row's id. NULL for keys
+    # created before this column existed (hash-only, cannot be copied) and for
+    # revoked or archived keys. Authentication never reads it.
+    encrypted_secret: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)

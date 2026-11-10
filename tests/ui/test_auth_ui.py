@@ -388,7 +388,7 @@ def test_generate_key_reveals_once_and_works(page, live_server):
     _open_keys(page, live_server)
     secret = _generate(page, "ui-generated")
     assert secret.startswith("sk-geek-")
-    assert "cannot be retrieved later" in page.inner_text("#new-key-display")
+    assert "copy it again later" in page.inner_text("#new-key-display").lower()
 
     snippet = page.inner_text("#new-key-snippet")
     assert f'OPENAI_API_KEY="{secret}"' in snippet
@@ -632,7 +632,7 @@ def test_leaving_the_keys_page_wipes_the_revealed_key(page, live_server):
     assert page.is_hidden("#new-key-display")
 
 
-def test_existing_keys_explain_non_recoverability_and_offer_no_copy(page, live_server):
+def test_existing_key_rows_copy_the_full_key_with_the_icon(page, live_server):
     _open_keys(page, live_server)
     _generate(page, "listed-key")
     page.reload(wait_until="networkidle")
@@ -640,15 +640,9 @@ def test_existing_keys_explain_non_recoverability_and_offer_no_copy(page, live_s
     page.click('#tabs [data-tab="keys"]')
     row = page.locator("#keys-table tbody tr", has_text="listed-key").first
     row.wait_for(timeout=15_000)
-    # No control offers the full key. The only copy control copies the masked
-    # identifier and says so in its accessible name.
-    assert row.locator("button", has_text="Copy").count() == 0
-    copy_controls = row.locator(".copy-prefix")
-    assert copy_controls.count() == 1
-    label = copy_controls.first.get_attribute("aria-label").lower()
-    assert "identifier" in label and "not the api key" in label
+    icon = row.locator(".copy-key")
+    assert icon.count() == 1 and icon.get_attribute("aria-label") == "Copy API key"
     assert row.locator(".rotate-key").count() == 1 and row.locator(".rev-key").count() == 1
-    assert "cannot be copied again" in page.inner_text(".keys-list-note")
 
 
 # ── startup never hangs on "Checking administrator status" ─────────────────

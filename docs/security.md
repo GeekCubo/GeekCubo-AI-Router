@@ -59,7 +59,18 @@ The new password is read from a hidden prompt (or one line on stdin with `--pass
 
 A fresh database also prints a first `sk-geek-*` key to the server log on its first start; it keeps working for inference until you revoke it.
 
-GeekCubo stores only a one-way hash, so an existing key can never be shown or copied again. The copy icon next to an existing key's masked prefix copies only that identifier (for example `sk-geek-....3d1f`), which is useful for matching a key to a client but cannot authenticate. If you lose a key, **Rotate** it: the replacement is shown once with a **Copy API key** button, it has the same restrictions, and the old key keeps working until you revoke it. Applications that used the old key must be updated. **Revoke** takes effect immediately.
+**Rotate** creates a replacement with the same restrictions; the old key keeps working until you revoke it, and applications that used it must be updated. **Revoke** takes effect immediately.
+
+### Copying a key later
+
+Every key created or rotated on this version can be copied again at any time: click the **copy icon** next to its masked prefix in **Settings → API Keys** and the full `sk-geek-*` key is placed on the clipboard.
+
+- **How it is stored:** besides the hash used for authentication, GeekCubo keeps an AES-256-GCM copy sealed with a dedicated `API_KEY_RECOVERY_KEY` and bound to the key's id. Authentication never reads that copy. No plaintext key is stored.
+- **Controls on copying:** administrator session and CSRF token, `Cache-Control: no-store`, a limit of 30 copies per 10 minutes per session, and an audit row in `key_recovery_audit` for every attempt (outcome, masked prefix, IP — never the secret). The key is never written into the page.
+- **Older keys** (created before this release) were stored hash-only and cannot be recovered. Their copy icon is greyed out and explains this; **Rotate** gives you a copyable replacement, and you choose whether the old key keeps working. Nothing is rotated or revoked automatically.
+- **Revoking or archiving** a key destroys its encrypted copy.
+- **Risk:** anyone who obtains both the database and `API_KEY_RECOVERY_KEY` (for example a full backup of `/data`) can decrypt stored keys. Protect backups accordingly.
+- **Losing `API_KEY_RECOVERY_KEY`** does not break any key; stored copies just become unreadable. GeekCubo refuses to generate a replacement while encrypted copies exist, so restore the original from backup.
 
 The list shows **Active** keys by default; **Revoked & expired** and **All** show the rest. A revoked or expired key can be **Archived**: it disappears from key management, but the record (hash and revocation time) stays in the database, so request history in Analytics remains intact. Active keys cannot be archived — revoke them first.
 
@@ -79,10 +90,11 @@ Variable names do not change how GeekCubo authenticates: it accepts the `sk-geek
 
 ## Encryption at rest
 
-On first start GeekCubo provisions two secrets automatically and writes them to a `.geekcubo-secrets` file next to the database (mode `0600`, never committed, never logged):
+On first start GeekCubo provisions three secrets automatically and writes them to a `.geekcubo-secrets` file next to the database (mode `0600`, never committed, never logged):
 
 - `CREDENTIAL_ENCRYPTION_KEY` — the AES-256 key that seals provider and Artificial Analysis credentials at rest.
 - `API_KEY_PEPPER` — the pepper for inference-key hashing.
+- `API_KEY_RECOVERY_KEY` — the dedicated AES-256 key that seals the copyable copy of each API key (see *Copying a key later*). An install upgraded from an older release gains it on the next start; the other two lines in the file are left untouched. If you manage both of the other secrets in `.env` and have no secrets file, set this one in `.env` too; otherwise new keys are stored hash-only.
 
 Restarting never regenerates them (the file is reused). If you set either value in `.env`, it takes precedence and is never overwritten. If the database already holds encrypted records but the key is missing (for example, a partial restore), GeekCubo refuses to start rather than inventing a key that could never decrypt them — restore the key from backup.
 

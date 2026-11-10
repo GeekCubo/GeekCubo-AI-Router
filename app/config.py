@@ -75,6 +75,12 @@ class Settings(BaseSettings):
     # Leave empty (and unset the env var) after a successful migrate.
     credential_encryption_previous_key: str = ""
     api_key_pepper: str = ""
+    # Dedicated key that seals the copyable copy of each sk-geek-* key (copy
+    # icon in Settings -> API Keys). Separate from CREDENTIAL_ENCRYPTION_KEY so
+    # the two can be rotated and backed up independently. Generated on first
+    # start next to the SQLite database; set it explicitly on Postgres. Losing
+    # it makes stored copies unreadable (keys still authenticate).
+    api_key_recovery_key: str = ""
     # Explicit opt-out from the startup guard that refuses to run with the
     # publicly-known dev encryption key when real credentials are at stake.
     allow_insecure_dev_key: bool = False

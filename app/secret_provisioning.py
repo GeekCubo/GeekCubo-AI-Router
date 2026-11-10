@@ -43,6 +43,15 @@ logger = logging.getLogger("geekcubo.secrets")
 SECRETS_FILENAME = ".geekcubo-secrets"
 _KEY_VAR = "CREDENTIAL_ENCRYPTION_KEY"
 _PEPPER_VAR = "API_KEY_PEPPER"
+# Dedicated key that seals the copyable copy of sk-geek-* keys. Generated alongside the
+# other two, but provisioned independently: an install upgraded from a release
+# without it gains it on the next start, and nothing else changes.
+_RECOVERY_VAR = "API_KEY_RECOVERY_KEY"
+_FIELDS = {
+    _KEY_VAR: "credential_encryption_key",
+    _PEPPER_VAR: "api_key_pepper",
+    _RECOVERY_VAR: "api_key_recovery_key",
+}
 
 
 def _sqlite_dir(database_url: str) -> Path | None:
@@ -114,10 +123,40 @@ def _atomic_write_secrets(path: Path, values: dict[str, str]) -> None:
             pass
 
 
+def _append_secrets(path: Path, values: dict[str, str]) -> None:
+    """Add new KEY=value lines to an existing secrets file, keeping the rest.
+
+    Rewritten atomically (temp file + rename) with the original lines first and
+    unchanged, so an existing CREDENTIAL_ENCRYPTION_KEY or API_KEY_PEPPER can
+    never be altered by an upgrade. Keys already present are never replaced.
+    """
+    current = _read_secrets_file(path)
+    additions = {k: v for k, v in values.items() if k not in current}
+    if not additions:
+        return
+    original = path.read_text(encoding="utf-8")
+    if original and not original.endswith("\n"):
+        original += "\n"
+    body = original + "".join(f"{k}={v}\n" for k, v in sorted(additions.items()))
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{_secrets.token_hex(4)}.tmp")
+    fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(body)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+
+
 def _configured() -> dict[str, str]:
-    """Which of the two secrets are already present (env or .env)."""
+    """Which of the managed secrets are already present (env or .env)."""
     out: dict[str, str] = {}
-    for var in (_KEY_VAR, _PEPPER_VAR):
+    for var, field in _FIELDS.items():
         value = os.environ.get(var, "")
         if value:
             out[var] = value
@@ -126,11 +165,6 @@ def _configured() -> dict[str, str]:
                 from app.config import get_settings
 
                 s = get_settings()
-                field = (
-                    "credential_encryption_key"
-                    if var == _KEY_VAR
-                    else "api_key_pepper"
-                )
                 value = getattr(s, field, "") or ""
                 if value:
                     out[var] = value
@@ -168,6 +202,22 @@ async def _encrypted_records_exist(engine) -> bool:
     return False
 
 
+async def _recoverable_keys_exist(engine) -> bool:
+    """True when any API key row carries a recoverable (encrypted) copy."""
+    from sqlalchemy import select
+
+    from packages.db.models.api_key import ApiKey
+
+    async with engine.connect() as conn:
+        try:
+            row = (await conn.execute(
+                select(ApiKey.id).where(ApiKey.encrypted_secret.isnot(None)).limit(1)
+            )).first()
+        except Exception:
+            return False
+    return row is not None
+
+
 async def provision_secrets(settings, engine) -> None:
     """Generate or load the credential key + pepper for a fresh install.
 
@@ -180,7 +230,7 @@ async def provision_secrets(settings, engine) -> None:
     ``RuntimeError`` only in the "existing ciphertext but no key" case.
     """
     existing = _configured()
-    if _KEY_VAR in existing and _PEPPER_VAR in existing:
+    if all(var in existing for var in _FIELDS):
         return  # fully configured — nothing to do
 
     path = _secrets_path(settings.database_url)
@@ -189,17 +239,24 @@ async def provision_secrets(settings, engine) -> None:
         # already set one of the two, nothing we can safely add here.
         return
 
+    if _KEY_VAR in existing and _PEPPER_VAR in existing and not path.exists():
+        # The operator manages secrets explicitly (.env / environment) and has
+        # no secrets file. Do not create one just for the optional recovery
+        # key: recoverable keys stay unavailable until API_KEY_RECOVERY_KEY is
+        # set the same way.
+        return
+
     loaded: dict[str, str] = {}
     if path.exists():
         loaded = _read_secrets_file(path)
 
     # Reuse whatever the file already has for the missing values.
-    for var in (_KEY_VAR, _PEPPER_VAR):
+    for var in _FIELDS:
         if var not in existing and var in loaded:
             os.environ[var] = loaded[var]
 
     # Re-check after loading the file: maybe the file supplied everything.
-    still_missing = [v for v in (_KEY_VAR, _PEPPER_VAR)
+    still_missing = [v for v in _FIELDS
                      if v not in existing and not os.environ.get(v)]
 
     if not still_missing:
@@ -209,6 +266,13 @@ async def provision_secrets(settings, engine) -> None:
 
     # We need to generate at least one secret. If the database already has
     # ciphertext but no key exists, inventing one would orphan that data.
+    if _RECOVERY_VAR in still_missing and await _recoverable_keys_exist(engine):
+        raise RuntimeError(
+            "API_KEY_RECOVERY_KEY is missing but the database holds recoverable "
+            "API keys sealed with it. Refusing to generate a new key that could "
+            "never open them. Restore API_KEY_RECOVERY_KEY from backup (the "
+            ".geekcubo-secrets file or .env)."
+        )
     if _KEY_VAR in still_missing and await _encrypted_records_exist(engine):
         raise RuntimeError(
             "Credential secrets are missing but the database already contains "
@@ -219,10 +283,15 @@ async def provision_secrets(settings, engine) -> None:
         )
 
     generated = {v: _secrets.token_hex(32) for v in still_missing}
-    _atomic_write_secrets(path, {**_configured(), **loaded, **generated})
+    if loaded:
+        # Upgrade: the file exists but predates a newly managed secret. Add the
+        # missing value without touching the existing ones (see _append_secrets).
+        _append_secrets(path, generated)
+    else:
+        _atomic_write_secrets(path, {**_configured(), **loaded, **generated})
     # Read back what actually landed (a concurrent worker may have won the
     # write), so every worker uses identical secrets.
     final = _read_secrets_file(path)
     for var in still_missing:
         os.environ[var] = final.get(var, generated[var])
-    logger.info("geekcubo_secrets_generated", count=len(still_missing))
+    logger.info("geekcubo_secrets_generated count=%d", len(still_missing))

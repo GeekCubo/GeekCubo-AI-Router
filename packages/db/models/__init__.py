@@ -7,6 +7,7 @@ from packages.db.models.chat_attachment import ChatAttachment
 from packages.db.models.chat_conversation import ChatConversation, ChatMessage, ChatSettings
 from packages.db.models.chat_search_settings import ChatSearchSettings
 from packages.db.models.custom_provider import CustomProvider, CustomProviderModel
+from packages.db.models.key_recovery import KeyRecoveryAudit
 from packages.db.models.local_connect import (
     LocalEnrollment,
     LocalMachine,
@@ -45,6 +46,7 @@ __all__ = [
     "MetadataSource",
     "CustomProvider",
     "CustomProviderModel",
+    "KeyRecoveryAudit",
     "QualitySettings",
     "QualityScoreOverride",
     "QualityScoreSnapshot",
