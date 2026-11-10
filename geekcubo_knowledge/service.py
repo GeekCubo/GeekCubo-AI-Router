@@ -77,6 +77,24 @@ def _reference(title: str, heading: str) -> str:
     return f"{title} → {heading}" if heading and heading != title else title
 
 
+_SUFFIXES = ("ing", "ed", "es", "s")
+
+
+def _stem(term: str) -> str:
+    """Strip one common English suffix, keeping at least 3 characters.
+
+    Used as an FTS prefix ("los"* matches lose/losing/lost-free text), so a
+    short stem is fine: coverage scoring keeps an over-broad prefix from
+    outranking sections that contain the actual words.
+    """
+    if "_" in term or "-" in term or any(c.isdigit() for c in term):
+        return term  # identifiers match exactly
+    for suf in _SUFFIXES:
+        if term.endswith(suf) and len(term) - len(suf) >= 3:
+            return term[: -len(suf)]
+    return term
+
+
 def build_match_query(query: str) -> str | None:
     """Turn free text into a safe FTS5 expression.
 
@@ -96,6 +114,13 @@ def build_match_query(query: str) -> str | None:
     if not terms:
         return None
     quoted = [f'"{t}"' for t in terms[:16]]
+    # Cheap stemming: "losing" also finds "lose", "updating" finds "update".
+    # Prefix terms only widen the candidate set; coverage below still scores
+    # on the words as asked.
+    for t in terms[:16]:
+        stem = _stem(t)
+        if stem != t and f'"{stem}"*' not in quoted:
+            quoted.append(f'"{stem}"*')
     expr = " OR ".join(quoted)
     if len(terms) > 1:
         expr = f'("{" ".join(terms[:8])}") OR {expr}'
@@ -184,7 +209,7 @@ class KnowledgeService:
         expr = build_match_query(query)
         if expr is None:
             return []
-        terms = [t for t in re.findall(r'"([^"]+)"', expr) if " " not in t]
+        terms = [m.group(1) for m in re.finditer(r'"([^"]+)"(?!\*)', expr) if " " not in m.group(1)]
         with self._lock:
             con = self._connect()
             # Over-fetch, then re-rank in Python: bm25 alone lets frequent,
@@ -211,8 +236,8 @@ class KnowledgeService:
             text = f"{head} {r[5].lower()}"
             # Rarity-weighted coverage: "searxng" (in 4 sections) counts far
             # more than "enable" (in 30), so the topic word decides relevance.
-            coverage = sum(w for t, w in weights.items() if t in text) / total_w
-            in_head = sum(w for t, w in weights.items() if t in head) / total_w * len(weights)
+            coverage = sum(w for t, w in weights.items() if _stem(t) in text) / total_w
+            in_head = sum(w for t, w in weights.items() if _stem(t) in head) / total_w * len(weights)
             score = -float(r[6]) * (0.5 + coverage) + 2.0 * in_head
             # Relevance floor: a section that shares only an incidental word
             # with the question ("best", "today") is noise, not an answer.
@@ -238,8 +263,10 @@ class KnowledgeService:
         n = con.execute("SELECT count(*) FROM sections").fetchone()[0] or 1
         out: dict[str, float] = {}
         for t in terms:
+            stem = _stem(t)
             df = con.execute(
-                "SELECT count(*) FROM sections_fts WHERE sections_fts MATCH ?", (f'"{t}"',)
+                "SELECT count(*) FROM sections_fts WHERE sections_fts MATCH ?",
+                (f'"{stem}"*' if stem != t else f'"{t}"',),
             ).fetchone()[0]
             out[t] = math.log((n + 1) / (df + 0.5))
         return out
