@@ -63,3 +63,7 @@ Thumbs.db
 # Owner scratch space for screenshots and other temporary working files.
 /temp/
 /tmp/
+
+# The prebuilt GeekCubo Knowledge index ships with the code (CI verifies it is
+# current with `python -m geekcubo_knowledge check`).
+!geekcubo_knowledge/data/knowledge.sqlite3

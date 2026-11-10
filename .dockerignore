@@ -71,3 +71,6 @@ Dockerfile*
 *.log
 *.bak
 *.bak.*
+
+# The prebuilt GeekCubo Knowledge index is part of the image.
+!geekcubo_knowledge/data/knowledge.sqlite3

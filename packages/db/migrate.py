@@ -497,6 +497,11 @@ async def ensure_chat_columns(engine) -> None:
                 conn,
                 "ALTER TABLE chat_messages ADD COLUMN seq INTEGER NOT NULL DEFAULT 0",
             )
+        # Ask GeekCubo provenance. NULL for every existing message (Normal Chat).
+        if "chat_mode" not in message_cols:
+            await _apply_ddl(conn, "ALTER TABLE chat_messages ADD COLUMN chat_mode VARCHAR(20)")
+        if "knowledge_json" not in message_cols:
+            await _apply_ddl(conn, "ALTER TABLE chat_messages ADD COLUMN knowledge_json TEXT")
 
 
 async def ensure_chat_search_columns(engine) -> None:

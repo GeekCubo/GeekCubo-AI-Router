@@ -67,6 +67,9 @@ dependencies = [
 
 [project.optional-dependencies]
 postgres = ["asyncpg>=0.29.0"]
+# The read-only documentation MCP server (`geekcubo-mcp serve`). The router
+# itself and Ask GeekCubo in Chat do not need it.
+mcp = ["mcp>=2.3,<3"]
 redis = ["redis[hiredis]>=5.0.0"]
 dev = [
     "pytest>=8.2.0",
@@ -85,6 +88,7 @@ ui = [
 [project.scripts]
 geekcubo = "app.cli:main"
 geekcubo-connector = "geekcubo_connector.cli:main"
+geekcubo-mcp = "geekcubo_knowledge.mcp_server:main"
 
 [project.urls]
 Homepage = "https://geekcubo.com"
@@ -101,13 +105,13 @@ build-backend = "hatchling.build"
 # wheel so `pip install geekcubo` still serves the UI. force-include maps it to
 # `app/design/` at build time — no file move, no drift in the package list.
 [tool.hatch.build.targets.wheel]
-packages = ["app", "packages", "geekcubo_connector"]
+packages = ["app", "packages", "geekcubo_connector", "geekcubo_knowledge"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "design" = "app/design"
 
 [tool.hatch.build.targets.sdist]
-include = ["app", "packages", "geekcubo_connector", "design", "scripts", "tests", "README.md", "LICENSE", "install.sh", "pyproject.toml"]
+include = ["app", "packages", "geekcubo_connector", "geekcubo_knowledge", "docs", "DEPLOYMENT.md", "CONTRIBUTING.md", "SECURITY.md", "integrations", "design", "scripts", "tests", "README.md", "LICENSE", "install.sh", "pyproject.toml"]
 exclude = ["**/__pycache__", "**/*.pyc", "design/test_i18n_unittest.py"]
 
 [tool.pytest.ini_options]

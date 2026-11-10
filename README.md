@@ -26,7 +26,7 @@ A self-hosted, OpenAI-compatible AI gateway and LLM router. Bring your own provi
 - [Why GeekCubo](#why-geekcubo) · [Features](#features) · [Architecture at a glance](#architecture-at-a-glance)
 - [Install](#install) · [First-time administrator setup](#first-time-administrator-setup) · [Add providers](#add-providers)
 - [API keys and endpoints](#api-keys-and-endpoints) · [Call it from an SDK](#call-it-from-an-sdk) · [Connect OpenCode and other tools](#connect-opencode-and-other-tools)
-- [Automatic routing](#automatic-routing) · [Chat and attachments](#chat-and-attachments) · [Optional web search](#optional-web-search)
+- [Automatic routing](#automatic-routing) · [Chat and attachments](#chat-and-attachments) · [Ask GeekCubo and the docs MCP server](#ask-geekcubo-and-the-docs-mcp-server) · [Optional web search](#optional-web-search)
 - [Local AI Connect](#local-ai-connect) · [Analytics and cost tracking](#analytics-and-cost-tracking) · [Security and deployment](#security-and-deployment)
 - [Limitations](#limitations) · [Troubleshooting and documentation](#troubleshooting-and-documentation) · [Support GeekCubo](#support-geekcubo) · [License](#license)
 
@@ -257,6 +257,24 @@ Attach files with the paperclip, drag-and-drop or paste: images (sent to vision-
 
 </details>
 
+## Ask GeekCubo and the docs MCP server
+
+**GeekCubo Knowledge** answers questions about GeekCubo itself from its own documentation, bundled as a small local index (SQLite FTS5) — no training, hosting, vector database or external search.
+
+- **Ask GeekCubo** in **Chat**: switch from *Normal Chat* to *Ask GeekCubo*, ask how a GeekCubo feature works, and the model you selected answers from the relevant documentation sections, listed under **Sources**. Normal Chat is unchanged; `KNOWLEDGE_ENABLED=false` hides the mode.
+- **GeekCubo MCP** for OpenCode and other MCP clients: a read-only stdio server on your own machine, no GeekCubo server or key needed.
+
+```bash
+uv tool install "geekcubo[mcp] @ git+https://github.com/GeekCubo/GeekCubo-AI-Router"
+```
+
+```jsonc
+// opencode.jsonc (OpenCode 2.x)
+{ "mcp": { "servers": { "geekcubo-knowledge": { "type": "local", "command": ["geekcubo-mcp", "serve"] } } } }
+```
+
+This is separate from using GeekCubo as OpenCode's model provider ([Connect OpenCode](#connect-opencode-and-other-tools)), and separate from web search. Details, security boundaries and limits: [GeekCubo Knowledge](docs/geekcubo-knowledge.md).
+
 ## Optional web search
 
 Chat can search the web before answering and cite the pages it used. **Search is off by default and entirely optional**: GeekCubo routes and chats normally without SearXNG, Brave or Tavily, and search credentials are stored separately from model-provider credentials. Configure everything in **Chat → ⚙ Chat settings → Web search**:
@@ -349,6 +367,7 @@ Update with `git pull`, then `docker compose build api && docker compose up -d a
 - **401 from the API:** the client must send an `sk-geek-*` key, not a provider key or the dashboard password.
 - **Cannot sign in after an HTTPS proxy change:** set `TRUST_PROXY_HEADERS=true` so cookies get the `Secure` flag.
 - **Web search test fails:** check the URL is reachable from the container and SearXNG has the `json` format enabled, or re-enter the Brave/Tavily key.
+- **Ask GeekCubo is greyed out:** the documentation index is missing or unreadable in this build; Normal Chat still works. Rebuild the image, or see [GeekCubo Knowledge](docs/geekcubo-knowledge.md#turning-it-off).
 
 </details>
 
@@ -359,6 +378,7 @@ Update with `git pull`, then `docker compose build api && docker compose up -d a
 | [Model Intelligence](docs/model-intelligence.md) | Metadata sources, pricing, capabilities |
 | [Connecting tools and SDKs](docs/integrations.md) | Connect a tool, OpenCode, Claude Code, native protocols |
 | [Local AI Connect](docs/local-ai-connect.md) · [Chat](docs/chat.md) | Local models; dashboard chat, web search, attachments |
+| [GeekCubo Knowledge](docs/geekcubo-knowledge.md) | Ask GeekCubo in Chat; the `geekcubo-mcp` documentation server for OpenCode |
 | [API endpoints](docs/api.md) · [Architecture](docs/architecture.md) | Endpoints, catalog, cache; source layout, tests, roadmap |
 | [Deployment](DEPLOYMENT.md) | VPS, reverse proxy, backup, upgrades |
 | [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md) · [Code of Conduct](CODE_OF_CONDUCT.md) | Fork-and-PR workflow, tests, review; private vulnerability reports |

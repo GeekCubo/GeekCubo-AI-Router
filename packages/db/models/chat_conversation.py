@@ -63,6 +63,13 @@ class ChatMessage(Base, UUIDMixin, SoftDeleteMixin):
     search_backend: Mapped[str | None] = mapped_column(String(20), nullable=True)
     search_query: Mapped[str | None] = mapped_column(Text, nullable=True)
     citations_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # "knowledge" when the turn ran in Ask GeekCubo mode (documentation
+    # retrieved and injected); NULL for Normal Chat. Stored on both the user
+    # and assistant rows so a reload shows which mode produced an answer.
+    chat_mode: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Documentation sources actually retrieved for this answer:
+    # [{id,title,heading,reference,path}], plus the docs version.
+    knowledge_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     trace_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)

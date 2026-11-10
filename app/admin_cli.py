@@ -46,6 +46,7 @@ async def _with_db(fn):
         ensure_auth_columns,
         ensure_budget_columns,
         ensure_chat_attachment_columns,
+        ensure_chat_columns,
         ensure_custom_provider_columns,
         ensure_json_capability_split,
         ensure_local_connect_tables,
@@ -63,6 +64,7 @@ async def _with_db(fn):
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         await ensure_budget_columns(engine)
+        await ensure_chat_columns(engine)
         await ensure_chat_attachment_columns(engine)
         await ensure_custom_provider_columns(engine)
         await ensure_json_capability_split(engine)

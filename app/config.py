@@ -85,6 +85,11 @@ class Settings(BaseSettings):
     # publicly-known dev encryption key when real credentials are at stake.
     allow_insecure_dev_key: bool = False
 
+    # ── GeekCubo Knowledge ──
+    # "Ask GeekCubo" in Chat answers from the bundled documentation index.
+    # Set false to hide the mode; Normal Chat and everything else is unaffected.
+    knowledge_enabled: bool = True
+
     # ── Custom OpenAI-compatible providers ──
     # Comma-separated list of `host` or `host:port` entries (no scheme) that
     # are explicitly authorized as LOCAL/private custom-provider endpoints.

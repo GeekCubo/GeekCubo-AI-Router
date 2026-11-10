@@ -2851,6 +2851,8 @@ pre, .code-pre, .code-block { text-align: left; }
 .chat-msg-user { align-self: flex-end; align-items: flex-end; }
 .chat-msg-assistant { align-self: flex-start; align-items: flex-start; }
 .chat-bubble {
+  min-width: 0;
+  max-width: 100%;
   padding: 10px 14px;
   border-radius: var(--r-md);
   font-size: var(--fs-sm);
@@ -3435,3 +3437,38 @@ button.match-filter.is-on { border-color: currentColor; box-shadow: inset 0 0 0 
 
 /* Copy icon on a key row: copies the full key; greyed out for hash-only keys. */
 .keys-table .key-prefix-cell .copy-key.is-unavailable { opacity: 0.3; cursor: help; }
+
+/* ==========================================================================
+   CHAT — Normal Chat | Ask GeekCubo
+   ========================================================================== */
+.chat-mode-bar {
+  display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap;
+  padding: 8px 16px 0;
+}
+.chat-mode-bar[hidden] { display: none; }
+.chat-mode-seg .seg-btn { display: inline-flex; align-items: center; gap: 6px; }
+.chat-mode-seg .seg-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.chat-mode-seg #ch-mode-knowledge.active { color: var(--accent); }
+.chat-mode-note { font-size: var(--fs-xs); }
+.chat-composer.is-knowledge textarea { border-color: var(--accent); }
+.chat-mode-tag {
+  align-self: flex-end; font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em;
+  color: var(--accent); margin-bottom: 2px;
+}
+.chat-knowledge-sources {
+  margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); font-size: var(--fs-xs);
+}
+.chat-knowledge-sources summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; }
+.chat-knowledge-sources summary::-webkit-details-marker { display: none; }
+.chat-knowledge-caret { color: var(--ink-3); font-size: 10px; transition: transform var(--d-fast) var(--ease); }
+.chat-knowledge-sources[open] .chat-knowledge-caret { transform: rotate(90deg); }
+.chat-knowledge-sources summary .chat-citations-title { margin: 0; }
+.chat-knowledge-sources ol { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
+.chat-knowledge-sources li { color: var(--ink-2); overflow-wrap: anywhere; }
+.chat-knowledge-id { font-size: 10.5px; color: var(--ink-3); background: none; padding: 0; }
+.chat-knowledge-sources.is-empty { color: var(--ink-3); }
+@media (max-width: 560px) {
+  .chat-mode-bar { padding: 8px 10px 0; }
+  .chat-mode-note { flex: 1 1 100%; }
+  .chat-knowledge-id { display: block; }
+}

@@ -22,6 +22,7 @@ app/
 ├── quality_scores.py     Artificial Analysis scores + manual overrides
 ├── prompt_cache.py       Cross-provider exact-match cache (Redis or in-memory LRU)
 ├── web_search.py         Optional SearXNG / Brave / Tavily search
+├── knowledge_chat.py     Ask GeekCubo: documentation context for Chat
 ├── safe_fetch.py         SSRF-hardened outbound fetches
 ├── attachments/          Upload detection, extraction, storage
 ├── local_connect/        Local AI Connect hub, dispatcher, enrollment, catalog
@@ -34,6 +35,8 @@ packages/
 └── db/                   Models, engine, startup migrations, guards
 
 geekcubo_connector/       Local AI Connect agent (`geekcubo-connector`)
+geekcubo_knowledge/       Documentation index (SQLite FTS5), retrieval service,
+                          and the read-only `geekcubo-mcp` stdio server
 design/                   Dashboard (HTML, CSS, JS; 12 languages)
 integrations/             Tool configuration examples
 ```
