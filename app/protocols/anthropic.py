@@ -4,9 +4,14 @@ Pure functions + one pure async stream transformer. The caller-visible
 limitations are listed in integrations/claude-code.md; the load-bearing
 mapping decisions are:
 
-- `thinking` (request param and history blocks) is DROPPED with a log
-  warning, never rejected — Claude Code sends it whenever extended
-  thinking is on, and a 400 would make the whole client unusable.
+- The `thinking` request param (and `output_config.effort`) becomes the
+  engine's normalized `reasoning_effort`, which is then translated for the
+  model actually selected — budget for legacy Claude thinking, adaptive
+  effort for newer Claude, the native control for other providers. Signed
+  thinking blocks are kept aside on assistant turns (`thinking_blocks`) and
+  returned in responses, because Anthropic requires them back on a tool
+  loop; the engine forwards them only to an Anthropic model with thinking
+  on, never as text and never to another provider.
 - `tool_result` blocks in a user message split into separate OpenAI
   `role: "tool"` messages (emitted first, matching OpenAI's requirement
   that tool results directly follow the assistant tool_calls turn).
@@ -154,11 +159,39 @@ def _split_tool_result_content(content) -> tuple[str, list[dict]]:
 _DROPPED_BLOCK_TYPES = {"thinking", "redacted_thinking"}
 
 
+def _replayable_thinking(block: dict) -> dict | None:
+    """A thinking block Anthropic will accept back, or None.
+
+    Anthropic verifies the signature, so only a signed `thinking` block or a
+    `redacted_thinking` block (opaque `data`) is worth carrying; an unsigned
+    one would be rejected. Copied field by field so nothing else rides along.
+    """
+    if block.get("type") == "thinking":
+        signature = block.get("signature")
+        if isinstance(signature, str) and signature:
+            return {"type": "thinking", "thinking": str(block.get("thinking") or ""),
+                    "signature": signature}
+        return None
+    data = block.get("data")
+    if block.get("type") == "redacted_thinking" and isinstance(data, str) and data:
+        return {"type": "redacted_thinking", "data": data}
+    return None
+
+
 def _translate_assistant_message(blocks: list[dict]) -> dict:
     texts: list[str] = []
     tool_calls: list[dict] = []
+    thinking_blocks: list[dict] = []
     for block in blocks:
         btype = block.get("type")
+        if btype in _DROPPED_BLOCK_TYPES:
+            # Kept aside, not as text: Anthropic needs them back on a tool
+            # loop's assistant turn. The engine forwards them only to an
+            # Anthropic model with thinking on; every other target drops them.
+            replayable = _replayable_thinking(block)
+            if replayable is not None:
+                thinking_blocks.append(replayable)
+            continue
         if btype == "text":
             texts.append(require_text(block.get("text"), field="messages[].content[].text"))
         elif btype == "tool_use":
@@ -175,13 +208,13 @@ def _translate_assistant_message(blocks: list[dict]) -> dict:
                     "arguments": json.dumps(block.get("input") or {}),
                 },
             })
-        elif btype in _DROPPED_BLOCK_TYPES:
-            continue
         else:
             raise _invalid(f"Unsupported content block type in assistant message: {btype!r}")
     out: dict = {"role": "assistant", "content": "".join(texts) or None}
     if tool_calls:
         out["tool_calls"] = tool_calls
+    if thinking_blocks:
+        out["thinking_blocks"] = thinking_blocks
     if out["content"] is None and not tool_calls:
         # Every block was dropped (thinking-only turn — Claude Code sends
         # these on extended-thinking/compacted histories). The engine's
@@ -323,6 +356,46 @@ def _translate_tool_choice(tc: dict) -> str | dict:
     raise _invalid(f"Unsupported tool_choice type: {tctype!r}")
 
 
+def _thinking_effort(thinking: dict | None, output_config: object) -> str | None:
+    """Anthropic's thinking controls → the engine's normalized effort.
+
+    * `{"type": "enabled", "budget_tokens": N}` (legacy) — the budget maps to
+      the nearest level; translation back for an Anthropic model uses the
+      same budget table, so a Claude-to-Claude request round-trips.
+    * `{"type": "adaptive"}` + `output_config.effort` — the effort as given.
+      Adaptive without an effort is the model default, i.e. no setting.
+    * `{"type": "disabled"}` — `none`.
+
+    Anything unrecognised is a 400: silently dropping it would run the
+    request with a different amount of thinking than the client asked for.
+    """
+    from app.reasoning import ReasoningError, effort_from_budget, normalize_effort
+
+    explicit = None
+    if isinstance(output_config, dict) and output_config.get("effort") is not None:
+        try:
+            explicit = normalize_effort(output_config.get("effort"))
+        except ReasoningError as exc:
+            raise _invalid(f"output_config.effort: {exc.message}") from exc
+    if thinking is None:
+        return explicit
+    if not isinstance(thinking, dict):
+        raise _invalid("thinking must be an object")
+    kind = thinking.get("type")
+    if kind == "disabled":
+        return "none"
+    if kind == "adaptive":
+        return explicit
+    if kind == "enabled":
+        if explicit is not None:
+            return explicit
+        effort = effort_from_budget(thinking.get("budget_tokens"))
+        if effort is None or effort == "none":
+            raise _invalid("thinking.budget_tokens must be a positive integer")
+        return effort
+    raise _invalid(f"Unsupported thinking.type: {kind!r}")
+
+
 def to_openai_request(req: AnthropicMessagesRequest) -> dict:
     """Translate a validated Anthropic Messages request into the internal
     OpenAI chat.completions dict consumed by the chat engine."""
@@ -354,11 +427,9 @@ def to_openai_request(req: AnthropicMessagesRequest) -> dict:
         out["tools"] = [_translate_tool(t) for t in req.tools]
     if req.tool_choice is not None:
         out["tool_choice"] = _translate_tool_choice(req.tool_choice)
-    if req.thinking is not None:
-        # Claude Code sends this whenever extended thinking is on. There is
-        # no internal-schema equivalent yet — drop it so the request still
-        # works (documented limitation), never 400.
-        logger.warning("anthropic_thinking_param_dropped")
+    effort = _thinking_effort(req.thinking, getattr(req, "output_config", None))
+    if effort is not None:
+        out["reasoning_effort"] = effort
     if req.top_k is not None:
         logger.info("anthropic_top_k_dropped")
     return out
@@ -414,7 +485,13 @@ def to_anthropic_response(resp: dict) -> dict:
     choice = choices[0] if choices else {}
     msg = choice.get("message") or {}
 
-    content: list[dict] = []
+    # Thinking first, as Anthropic orders them: a client sends these back on
+    # its next tool-loop turn, and the signature is only valid unchanged.
+    content: list[dict] = [
+        b for b in (_replayable_thinking(tb) for tb in msg.get("thinking_blocks") or []
+                    if isinstance(tb, dict))
+        if b is not None
+    ]
     text = flatten_openai_content(msg.get("content"))
     if text:
         content.append({"type": "text", "text": text})
@@ -495,6 +572,11 @@ _ENGINE_ERROR_STATUS = {
     # `upstream_error` deliberately stays generic (500 api_error): it is the
     # bucket for failures we could not classify at all.
     "upstream_timeout": 529,
+    # A reasoning level / parameter the selected model cannot take: the
+    # request needs changing, so it is an invalid request, never retried.
+    "unsupported_reasoning_effort": 400,
+    "invalid_reasoning_effort": 400,
+    "unsupported_parameter": 400,
 }
 
 
@@ -527,6 +609,7 @@ async def stream_events(
     both events pick up."""
     started = False
     text_open = False
+    thinking_open: int | None = None  # upstream thinking index of the open block
     block_index = -1
     tool_buf: dict[int, dict] = {}  # tool_calls[].index → {id, name, args}
     flushed_names: dict[int, str] = {}  # index → name, for already-closed blocks
@@ -622,7 +705,53 @@ async def stream_events(
             choice = choices[0] if choices else {}
             delta = choice.get("delta") or {}
 
+            # Anthropic thinking (LiteLLM's `thinking_blocks` delta field):
+            # text fragments, then the signature, per upstream block index.
+            # Relayed as real thinking blocks so the client can send them
+            # back on the next tool-loop turn, where Anthropic requires them.
+            for tb in delta.get("thinking_blocks") or []:
+                if not isinstance(tb, dict):
+                    continue
+                tidx = tb.get("index", 0)
+                if thinking_open is not None and thinking_open != tidx:
+                    yield _block_stop()
+                    thinking_open = None
+                if tb.get("type") == "redacted_thinking":
+                    if isinstance(tb.get("data"), str) and tb["data"]:
+                        block_index += 1
+                        yield _ev("content_block_start", {
+                            "type": "content_block_start", "index": block_index,
+                            "content_block": {"type": "redacted_thinking", "data": tb["data"]},
+                        })
+                        yield _block_stop()
+                    continue
+                if thinking_open is None:
+                    if text_open:
+                        yield _block_stop()
+                        text_open = False
+                    thinking_open = tidx
+                    block_index += 1
+                    yield _ev("content_block_start", {
+                        "type": "content_block_start", "index": block_index,
+                        "content_block": {"type": "thinking", "thinking": ""},
+                    })
+                if tb.get("thinking"):
+                    yield _ev("content_block_delta", {
+                        "type": "content_block_delta", "index": block_index,
+                        "delta": {"type": "thinking_delta", "thinking": tb["thinking"]},
+                    })
+                if tb.get("signature"):
+                    yield _ev("content_block_delta", {
+                        "type": "content_block_delta", "index": block_index,
+                        "delta": {"type": "signature_delta", "signature": tb["signature"]},
+                    })
+                    yield _block_stop()
+                    thinking_open = None
+
             text = delta.get("content")
+            if (text or delta.get("tool_calls")) and thinking_open is not None:
+                yield _block_stop()
+                thinking_open = None
             if text:
                 # Text after tool-call fragments: the model finished those
                 # calls and moved on, so flush them now. Holding them to
@@ -686,7 +815,7 @@ async def stream_events(
         # Normal end of stream ([DONE] consumed by the frame source).
         if not started:
             yield _start_event({})
-        if text_open:
+        if text_open or thinking_open is not None:
             yield _block_stop()
         for ev in _tool_block_events():
             yield ev

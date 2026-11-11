@@ -246,6 +246,46 @@ def _model_meets(model: CatalogModel, needs: Iterable[str]) -> bool:
     )
 
 
+def reasoning_eligible(model: CatalogModel, effort: str | None) -> bool:
+    """Whether `model` may serve a request that asks for `effort`.
+
+    Separate from `_model_meets` because the reasoning gate has its own
+    policy: a confirmed level must match exactly, while an Unknown model
+    stays eligible and is attempted with the effort preserved (the provider's
+    rejection is the authoritative answer). Excluding Unknown here would drop
+    every model LiteLLM has not catalogued yet.
+
+    With no effort requested every model passes — a mixed pool keeps routing
+    exactly as it does today.
+    """
+    if effort is None:
+        return True
+    levels = getattr(model, "reasoning_levels", None)
+    if levels is None:
+        return True
+    return effort in levels
+
+
+def reasoning_levels_for(
+    candidates: Iterable[CatalogModel], *, effort: str
+) -> tuple[list[str], list[str], bool]:
+    """Split an eligible pool by reasoning support for `effort`.
+
+    Returns `(confirmed, unknown, any_confirmed)` where `confirmed` are ids
+    known to honour `effort` and `unknown` are ids whose support is not
+    known. Used to report what Auto can actually do before ranking.
+    """
+    confirmed: list[str] = []
+    unknown: list[str] = []
+    for m in candidates:
+        levels = getattr(m, "reasoning_levels", None)
+        if levels is None:
+            unknown.append(m.id)
+        elif effort in levels:
+            confirmed.append(m.id)
+    return confirmed, unknown, bool(confirmed)
+
+
 def _blended_cost(model: CatalogModel) -> float:
     return (
         _INPUT_WEIGHT * model.input_cost_per_token
@@ -309,6 +349,7 @@ def choose_auto_model(
     ttft_scores: dict[str, float] | None = None,
     top_n: int = 5,
     allow_estimates: bool = False,
+    reasoning_effort: str | None = None,
 ) -> tuple[list[str], dict[str, ScoringDetail]]:
     """Return up to `top_n` deployable models matching all `needs`, best first,
     plus a per-model scoring breakdown for the survivors.
@@ -362,6 +403,7 @@ def choose_auto_model(
         m for m in candidates
         if m.id in deployable
         and _model_meets(m, needs)
+        and reasoning_eligible(m, reasoning_effort)
         and is_priced_for_auto(m, allow_estimates=allow_estimates)
     ]
     if preferred_models:

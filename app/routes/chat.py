@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import prompt_cache, router_cache
+from app import prompt_cache, reasoning, router_cache
 from app.auto_routing import (
     _VERSION_SUFFIX_RE,
     canonical_model_base,
@@ -144,6 +144,8 @@ def _geek_response_headers(
     strategy: str,
     cache_status: str | None = None,
     auto_plan=None,
+    reasoning_requested: str | None = None,
+    reasoning_effective: str | None = None,
 ) -> dict[str, str]:
     """Shared x-geek-* response headers."""
     headers = {
@@ -156,7 +158,123 @@ def _geek_response_headers(
     if auto_plan is not None:
         # Why this model: strategy, effective strategy, tier, candidate count.
         headers.update(auto_plan.headers())
+    # An explicit effort is always reported back — including when it was
+    # downgraded — so a client can tell what actually happened. Requests
+    # without reasoning add nothing here.
+    headers.update(
+        reasoning.describe(
+            requested=reasoning_requested,
+            effective=reasoning_effective,
+            model_id=resolved_model,
+        )
+    )
     return headers
+
+
+def _local_runtime_of(client, model_name: str) -> tuple[str | None, tuple[str, ...] | None]:
+    """(adapter, reported `think` values) behind a Local AI Connect model.
+
+    Only local deployments have them; everything else returns (None, None).
+    """
+    for d in getattr(client, "_deployments", []) or []:
+        if d.model_name == model_name and d.custom_llm_provider == "geekcubo_local":
+            return getattr(d, "local_adapter", None), getattr(d, "local_thinking", None)
+    return None, None
+
+
+def _reasoning_provider_of(client, model_name: str, fallback: str | None) -> str | None:
+    """The provider id whose reasoning interface this deployment speaks.
+
+    Custom providers and local models each have their own translation, and
+    getting this wrong is what made the old pipeline drop the parameter.
+    """
+    for d in getattr(client, "_deployments", []) or []:
+        if d.model_name == model_name:
+            if d.custom_llm_provider == "geekcubo_local":
+                return "geekcubo_local"
+            if d.custom_llm_provider == "openai" and d.operator_priced:
+                return d.provider
+            return d.provider or fallback
+    return fallback
+
+
+def _reasoning_params_by_model(
+    *,
+    client,
+    models: list[str],
+    effort: str,
+    max_tokens: int | None,
+    skip_untranslatable: bool = False,
+    messages: list[dict] | None = None,
+    endpoint_levels: dict[str, tuple[str, ...] | None] | None = None,
+) -> dict[str, dict]:
+    """Translate the effort into each model's own provider parameters.
+
+    Pinned (`skip_untranslatable=False`): the single model must honour the
+    level, else `ReasoningError` propagates and the caller answers with a
+    4xx compatibility error rather than an outage.
+
+    Auto (`skip_untranslatable=True`): a candidate that cannot express the
+    level — an Unknown model ranked first that turns out unable to take it,
+    or a thinking budget that does not fit `max_tokens` — is left out, and
+    the next candidate becomes the primary. Only when no candidate can be
+    translated does the first error propagate. The cascade never reaches a
+    model that would drop or misinterpret the setting.
+    """
+    out: dict[str, dict] = {}
+    first_error: reasoning.ReasoningError | None = None
+    for model_name in models:
+        adapter, thinking = _local_runtime_of(client, model_name)
+        try:
+            out[model_name] = reasoning.provider_params(
+                model_id=model_name,
+                provider=_reasoning_provider_of(client, model_name, None),
+                effort=effort,
+                max_tokens=max_tokens,
+                local_adapter=adapter,
+                local_thinking=thinking,
+                messages=messages,
+                endpoint_levels=(endpoint_levels or {}).get(model_name),
+            )
+        except reasoning.ReasoningError as exc:
+            if not skip_untranslatable:
+                raise
+            first_error = first_error or exc
+            logger.info("reasoning_candidate_excluded", model=model_name, effort=effort)
+    if not out and first_error is not None:
+        raise first_error
+    return out
+
+
+async def _custom_endpoint_levels(db) -> dict[str, tuple[str, ...] | None]:
+    """Reasoning evidence each custom-provider deployment carries itself.
+
+    Read from the cached custom-provider views (no extra query per request).
+    Models with no evidence are absent, so they translate as Unknown.
+    """
+    from app.custom_providers import load_custom_providers, namespaced_model_id
+
+    out: dict[str, tuple[str, ...] | None] = {}
+    for prov in await load_custom_providers(db):
+        for m in prov.models:
+            if m.reasoning_levels is not None:
+                out[namespaced_model_id(prov.slug, m.id)] = m.reasoning_levels
+    return out
+
+
+def _reasoning_error_response(exc) -> HTTPException:
+    """A compatibility error, never a provider outage.
+
+    400 with a stable `x-geek-error-type` so the native Anthropic/Gemini
+    surfaces render it in their own taxonomy instead of collapsing it to a
+    generic upstream failure.
+    """
+    logger.warning("reasoning_request_rejected", error_type=exc.error_type)
+    return HTTPException(
+        status_code=exc.status_code,
+        detail=exc.message,
+        headers={ERROR_TYPE_HEADER: exc.error_type},
+    )
 
 
 async def _build_log_row(
@@ -513,6 +631,11 @@ async def execute_chat(
     # `x-geek-requested-model` header always reflect what the user asked for,
     # not the post-resolution primary.
     requested_model = body.model
+    # `None` means "provider default" and is never coerced to a level: a
+    # request that omits reasoning must behave exactly as it did before this
+    # pipeline understood the field at all.
+    reasoning_requested = body.reasoning_effort
+    reasoning_effective = reasoning_requested
     trace_id = trace_id or str(uuid.uuid4())
     was_auto = body.model == "auto"
     # Routing hints come from request headers (conversation id, manual
@@ -766,8 +889,13 @@ async def execute_chat(
                 policy=policy,
                 evidence=evidence,
                 hints=routing_hints,
+                reasoning_effort=reasoning_requested,
             )
             candidates = auto_plan.candidates
+            # The planner may have reduced the effort under the optional
+            # downgrade policy; carry the effective level forward so the
+            # provider gets the level the model can actually honour.
+            reasoning_effective = auto_plan.reasoning_effective
             if profile is not None:
                 auto_plan.profile = profile.slug
                 auto_plan.notes.extend(profile_filter_notes)
@@ -777,6 +905,17 @@ async def execute_chat(
             #   - 403: capable models exist but none are in this key's allowlist
             #   - 422: categorised (providers, eligibility, capability,
             #          context, pool) with the setting to change.
+            if routing_err.category == auto_planner.REASONING:
+                # Deterministic capability problem, not a provider outage and
+                # not an allowlist problem: say exactly what cannot be honoured.
+                raise HTTPException(
+                    status_code=422,
+                    detail=routing_err.message,
+                    headers={
+                        ERROR_TYPE_HEADER: "unsupported_reasoning_effort",
+                        "x-geek-routing-diagnosis": routing_err.category,
+                    },
+                ) from routing_err
             # Use `is not None` to honor explicit empty allowlist (deny-all).
             if kc.model_allowlist is not None:
                 any_capable, _ = choose_auto_model(
@@ -849,6 +988,65 @@ async def execute_chat(
     failed_attempts: list[dict] = []
     completion_kwargs = body.model_dump(exclude_none=True)
 
+    # Replace the neutral `reasoning_effort` field with the parameter the
+    # selected model's provider actually accepts. This happens for the pinned
+    # path AND the auto path (whose effort may have been downgraded), and
+    # before the cache key is built, so the key describes the real request.
+    # Each Auto candidate is translated separately (a Gemini fallback must not
+    # inherit an Anthropic `thinking` block); a fallback that cannot honour
+    # the effort is left out of the cascade rather than called without it.
+    reasoning_params: dict[str, dict] | None = None
+    if reasoning_effective is not None:
+        completion_kwargs.pop("reasoning_effort", None)
+        try:
+            reasoning_params = _reasoning_params_by_model(
+                client=client,
+                models=candidates if was_auto and candidates else [body.model],
+                effort=reasoning_effective,
+                max_tokens=completion_kwargs.get("max_tokens"),
+                skip_untranslatable=bool(was_auto and candidates),
+                messages=completion_kwargs.get("messages"),
+                endpoint_levels=await _custom_endpoint_levels(db),
+            )
+            if was_auto and candidates:
+                # Promote the first candidate that can carry the effort, so
+                # the cascade, the cache key and the response headers all
+                # describe the model that is actually tried first.
+                skipped = [m for m in candidates if m not in reasoning_params]
+                candidates = [m for m in candidates if m in reasoning_params]
+                if skipped and auto_plan is not None:
+                    auto_plan.candidates = list(candidates)
+                    auto_plan.notes.append(
+                        f"reasoning_effort={reasoning_effective}: skipped "
+                        + ", ".join(skipped)
+                        + " (cannot express this level)"
+                    )
+                resolved_model = candidates[0]
+                body.model = candidates[0]
+                completion_kwargs["model"] = candidates[0]
+        except reasoning.ReasoningError as exc:
+            # A model that cannot honour the level is a client-side
+            # compatibility problem. Report it as such, and log the attempt so
+            # the request does not vanish from analytics.
+            error = _reasoning_error_response(exc)
+            log = await _build_log_row(
+                body=body, kc=kc, response={},
+                status_code=error.status_code, error_type=exc.error_type,
+                started_perf=started_perf,
+                strategy=strategy,
+                requested_model=requested_model,
+                actual_resolved=resolved_model,
+                auto_plan=auto_plan,
+                request_source=request_source,
+                trace_id=trace_id,
+            )
+            db.add(log)
+            try:
+                await db.commit()
+            except Exception as commit_err:
+                logger.warning("request_log_commit_failed", error=str(commit_err))
+            raise error from exc
+
     # Build the LiteLLM fallbacks argument from the auto candidate list.
     # Format: [{primary_model_name: [fallback_1, fallback_2, ...]}]
     # LiteLLM's async_function_with_fallbacks reads this from kwargs and
@@ -880,6 +1078,8 @@ async def execute_chat(
         per_call_kwargs["num_retries"] = settings.router_num_retries_auto
     if profile_ext_cfg and profile_ext_cfg.get("timeout_seconds"):
         per_call_kwargs["timeout"] = profile_ext_cfg["timeout_seconds"]
+    if reasoning_params is not None:
+        per_call_kwargs["model_params"] = reasoning_params
 
     # ── Prompt cache (blocking deterministic requests only) ────────────
     cache_status = "BYPASS"
@@ -902,6 +1102,12 @@ async def execute_chat(
             presence_penalty=completion_kwargs.get("presence_penalty"),
             frequency_penalty=completion_kwargs.get("frequency_penalty"),
             logit_bias=completion_kwargs.get("logit_bias"),
+            # Reasoning changes the answer, so it must change the key: a
+            # `high` request must never be served a cached `low` response,
+            # and a downgraded request must not reuse the requested level's
+            # entry. Requests without effort pass None and keep their keys.
+            reasoning_effort=reasoning_requested,
+            reasoning_effective=reasoning_effective,
         )
         cached = await prompt_cache.get_backend().get(cache_lookup_key)
         if cached is not None:
@@ -945,6 +1151,8 @@ async def execute_chat(
                 strategy=strategy,
                 cache_status="HIT",
                 auto_plan=auto_plan,
+                reasoning_requested=reasoning_requested,
+                reasoning_effective=reasoning_effective,
             ),
         )
 
@@ -1425,6 +1633,8 @@ async def execute_chat(
                     requested_model=requested_model,
                     strategy=strategy,
                     auto_plan=auto_plan,
+                    reasoning_requested=reasoning_requested,
+                    reasoning_effective=reasoning_effective,
                 ),
             },
         )
@@ -1556,6 +1766,8 @@ async def execute_chat(
             strategy=strategy,
             cache_status=cache_status,
             auto_plan=auto_plan,
+            reasoning_requested=reasoning_requested,
+            reasoning_effective=reasoning_effective,
         ),
     )
 

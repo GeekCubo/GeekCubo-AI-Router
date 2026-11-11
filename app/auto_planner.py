@@ -30,6 +30,8 @@ from app.auto_routing import (
     choose_auto_model,
     is_confirmed_price,
     is_priced_for_auto,
+    reasoning_eligible,
+    reasoning_levels_for,
 )
 from app.routing_policy import (
     ADAPTIVE_MIN_SAMPLES,
@@ -53,6 +55,9 @@ CONTEXT = "context_mismatch"
 POOL = "pool_mismatch"
 NOT_ALLOWED = "allowlist_mismatch"
 EXHAUSTED = "candidates_exhausted"
+# Explicit reasoning requirement no configured model can honour. Distinct from
+# CAPABILITY so the client is told to change the effort, not the model.
+REASONING = "reasoning_mismatch"
 
 _PROVIDER_LEVEL = {NO_PROVIDERS, ALL_DISABLED}
 
@@ -85,6 +90,14 @@ class AutoPlan:
     notes: list[str] = field(default_factory=list)
     # Routing profile slug when the request named one (`model="economy"`).
     profile: str | None = None
+    # Reasoning: what the client asked for, what the chosen model will
+    # actually do, and the translated provider parameter. `requested` is None
+    # when the request omitted effort entirely.
+    reasoning_requested: str | None = None
+    reasoning_effective: str | None = None
+    # Set when the effort was reduced by the optional downgrade policy. Never
+    # silently: the client sees it in a header and the log records it.
+    reasoning_downgraded: bool = False
 
     def headers(self) -> dict[str, str]:
         out = {
@@ -97,6 +110,12 @@ class AutoPlan:
             out["x-geek-routing-tier"] = self.tier
         if self.escalated:
             out["x-geek-routing-escalated"] = "true"
+        if self.reasoning_requested is not None:
+            out["x-geek-reasoning-requested"] = self.reasoning_requested
+        if self.reasoning_effective is not None:
+            out["x-geek-reasoning-effective"] = self.reasoning_effective
+        if self.reasoning_downgraded:
+            out["x-geek-reasoning-downgraded"] = "true"
         if self.reason:
             # Headers must be latin-1; keep the reason ASCII and short.
             out["x-geek-routing-reason"] = self.reason.encode("ascii", "replace").decode()[:200]
@@ -307,6 +326,7 @@ def plan_auto(
     policy: dict[str, Any],
     evidence: dict[str, dict[str, float]] | None = None,
     hints: dict[str, str] | None = None,
+    reasoning_effort: str | None = None,
 ) -> AutoPlan:
     """Return the ordered candidate list for one Auto request.
 
@@ -345,13 +365,78 @@ def plan_auto(
 
     allow_estimates = allows_reference_estimates(policy)
 
-    def _qualifies(m) -> bool:
+    def _base_qualifies(m) -> bool:
         return (
             m.id in deployable
             and _model_meets(m, needs)
             and is_priced_for_auto(m, allow_estimates=allow_estimates)
             and (allowlist is None or m.id in allowlist)
         )
+
+    def _qualifies(m) -> bool:
+        # Late-bound: after a policy downgrade this is the effective level.
+        return _base_qualifies(m) and reasoning_eligible(m, reasoning_effective)
+
+    # ── reasoning eligibility ────────────────────────────────────────────
+    # Applied to the planner's INPUT so the primary and every fallback already
+    # honour the requested effort: a fallback can never quietly drop it. With
+    # no effort requested this whole block is a no-op, and a mixed pool keeps
+    # routing exactly as before.
+    reasoning_effective = reasoning_effort
+    reasoning_downgraded = False
+    if reasoning_effort is not None:
+        base_pool = [m for m in usable_catalog if _base_qualifies(m)]
+        confirmed, unknown, any_confirmed = reasoning_levels_for(
+            base_pool, effort=reasoning_effort
+        )
+        known_conflict = [
+            m.id for m in base_pool
+            if m.reasoning_levels is not None
+            and reasoning_effort not in m.reasoning_levels
+        ]
+        if any_confirmed:
+            notes.append(
+                f"reasoning_effort={reasoning_effort}: "
+                f"{len(confirmed)} model(s) confirmed"
+                + (f", {len(unknown)} with unknown support" if unknown else "")
+            )
+        else:
+            notes.append(
+                f"reasoning_effort={reasoning_effort}: no model confirmed; "
+                "only unknown-capability models remain"
+            )
+        # Optional effort downgrade. Strict by default: the requested level is
+        # a hard requirement and an unsatisfiable request is an error, not a
+        # silently weaker answer.
+        # Unknown-capability models are attempted with the effort preserved
+        # (Unknown is not Unsupported), so downgrade/strict errors apply only
+        # when every eligible model is confirmed incompatible.
+        if not any_confirmed and not unknown and known_conflict:
+            downgraded = _apply_effort_downgrade(
+                policy=policy,
+                requested=reasoning_effort,
+                catalog=usable_catalog,
+                deployable=deployable,
+                allowlist=allowlist,
+                needs=needs,
+                allow_estimates=allow_estimates,
+            )
+            if downgraded is not None:
+                reasoning_effective, accepted_ids = downgraded
+                reasoning_downgraded = True
+                usable_catalog = [m for m in usable_catalog if m.id in accepted_ids]
+                notes.append(
+                    f"reasoning downgraded {reasoning_effort} -> {reasoning_effective} "
+                    "by the routing policy"
+                )
+            else:
+                raise AutoRoutingError(
+                    REASONING,
+                    f"No configured model can honour reasoning_effort="
+                    f"{reasoning_effort!r}. Add a model that supports it, or "
+                    "enable effort downgrade in the routing policy to accept "
+                    "a lower level.",
+                )
 
     all_ids = {m.id for m in usable_catalog}
     pools = pool_membership(policy, known_ids=all_ids)
@@ -427,6 +512,7 @@ def plan_auto(
             ttft_scores=ttft_scores,
             top_n=max(1, int((policy.get("fallback") or {}).get("max_attempts", 5))),
             allow_estimates=allow_estimates,
+            reasoning_effort=reasoning_effective,
         )
         return ids
 
@@ -581,11 +667,58 @@ def plan_auto(
         sticky=sticky,
         conversation_key=convo,
         notes=notes,
+        reasoning_requested=reasoning_effort,
+        reasoning_effective=reasoning_effective,
+        reasoning_downgraded=reasoning_downgraded,
     )
 
 
-# ── diagnosis for an empty result ─────────────────────────────────────────
+def _apply_effort_downgrade(
+    *,
+    policy: dict[str, Any],
+    requested: str,
+    catalog: list,
+    deployable: set[str],
+    allowlist: list[str] | None,
+    needs: set[str],
+    allow_estimates: bool,
+) -> tuple[str, set[str]] | None:
+    """Pick the highest level below `requested` that a model can honour.
 
+    Only reached when the operator enabled effort downgrade and no model
+    supports the requested level. Walks the ladder downward, stopping at the
+    policy's `min_effort` floor, and returns the first level at least one
+    otherwise-eligible model genuinely supports — together with that model
+    set, so the caller can restrict the candidate pool to models that can
+    actually serve the chosen level.
+
+    Returns None when nothing below the request is supported, which the
+    caller reports as a compatibility error rather than a weaker answer.
+    """
+    from app.reasoning import downgrade_candidates
+    from app.routing_policy import reasoning_policy
+
+    cfg = reasoning_policy(policy)
+    if not cfg.get("allow_downgrade"):
+        return None
+    for candidate_level in downgrade_candidates(
+        requested, minimum=cfg.get("min_effort")
+    ):
+        accepted = {
+            m.id
+            for m in catalog
+            if reasoning_eligible(m, candidate_level)
+            and m.id in deployable
+            and _model_meets(m, needs)
+            and is_priced_for_auto(m, allow_estimates=allow_estimates)
+            and (allowlist is None or m.id in allowlist)
+        }
+        if accepted:
+            return candidate_level, accepted
+    return None
+
+
+# ── diagnosis for an empty result ─────────────────────────────────────────
 
 def diagnose_empty(
     *,

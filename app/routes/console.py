@@ -132,6 +132,9 @@ async def routing_models(
             "vision": m.supports_vision,
             "json": m.supports_json_mode,
             "json_schema": m.supports_json_schema,
+            # Reasoning effort levels: a list when confirmed (possibly empty
+            # = no effort control), null when unknown.
+            "reasoning_levels": _levels_out(getattr(m, "reasoning_levels", None)),
             "context_length": getattr(m, "context_length", None),
             # Per-1M prices; None means unknown (never shown as $0).
             "input_per_million": (m.input_cost_per_token * 1e6) if m.input_cost_per_token else None,
@@ -143,7 +146,33 @@ async def routing_models(
         })
     rows.sort(key=lambda r: (not r["custom"], r["availability"] != "auto", r["id"]))
     total = len(rows)
-    return {"total": total, "offset": offset, "limit": limit, "models": rows[offset:offset + limit]}
+    return {
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "models": rows[offset:offset + limit],
+        # Levels Auto can honour: those at least one Auto-eligible model
+        # confirms. Unknown models are still tried for any level, but are not
+        # advertised as satisfying one.
+        "auto_reasoning_levels": _auto_reasoning_levels(
+            [
+                m for m in auto
+                if m.id in deployable
+                and is_priced_for_auto(m, allow_estimates=allow_estimates)
+            ]
+        ),
+    }
+
+
+def _levels_out(levels) -> list[str] | None:
+    return list(levels) if levels is not None else None
+
+
+def _auto_reasoning_levels(pool) -> list[str]:
+    from app.reasoning import LEVELS
+
+    seen = {lvl for m in pool for lvl in (getattr(m, "reasoning_levels", None) or ())}
+    return [lvl for lvl in LEVELS if lvl in seen]
 
 
 @router.get("/routing/explain")

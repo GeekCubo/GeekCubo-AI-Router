@@ -38,8 +38,15 @@ Streaming (`client.messages.stream(...)`) and tool use work as usual.
 
 ## Known limitations (v1)
 
-- `thinking` (extended thinking) is accepted but **dropped** — the request
-  still works, without a thinking budget. A `structlog` warning is emitted.
+- `thinking` (extended thinking) and `output_config.effort` are mapped to
+  GeekCubo's normalized reasoning effort and translated for the model that
+  serves the request: adaptive effort or a thinking budget for Claude, the
+  native control for other providers. A model that cannot honour it returns a
+  400 `invalid_request_error`, never a dropped setting. Budget ↔ level
+  mapping is approximate. Signed thinking blocks are returned and accepted
+  back, so tool loops with extended thinking keep working against Claude
+  models. They are never forwarded to non-Anthropic models. See
+  [Reasoning effort](../docs/reasoning.md#native-anthropic-and-gemini-endpoints).
 - `top_k` is dropped; `temperature` / `top_p` pass through, and values
   outside the API's own 0–1 range are rejected with a 400 rather than
   forwarded (an upstream rejection would reach you as a retryable 500).

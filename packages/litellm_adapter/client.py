@@ -64,10 +64,14 @@ def _build_allowed_fails_policy():
     )
 
 
-def _translate_error(exc: Exception) -> UpstreamProviderError:
+def _translate_error(exc: Exception, *, reasoning_sent: bool = False) -> UpstreamProviderError:
     import litellm
 
     msg = str(exc)
+    if reasoning_sent and _refused_reasoning_control(exc, msg):
+        return UpstreamProviderError(
+            msg, http_status=400, error_type="unsupported_reasoning_effort"
+        )
     # Local AI Connect dispatch failures are re-raised as LiteLLM exceptions
     # carrying the local code + status; recover them so callers see
     # `local_offline` / `local_not_approved` / `local_upstream_error` instead
@@ -75,7 +79,20 @@ def _translate_error(exc: Exception) -> UpstreamProviderError:
     local_code = getattr(exc, "geek_local_code", None)
     local_status = getattr(exc, "geek_local_status", None)
     if isinstance(local_code, str) and isinstance(local_status, int):
+        # A local runtime refusing `think`/`reasoning_effort` (Ollama answers
+        # "does not support thinking") arrives as a generic upstream error;
+        # it is a compatibility problem with the request, not an outage.
+        if local_code == "local_upstream_error" and _names_refused_reasoning(msg):
+            return UpstreamProviderError(
+                msg, http_status=400, error_type="unsupported_reasoning_effort"
+            )
         return UpstreamProviderError(msg, http_status=local_status, error_type=local_code)
+    # A parameter the selected model/provider does not accept is a client-side
+    # compatibility problem, not an outage. Reporting it as 503 told clients to
+    # back off and retry a request that can never succeed.
+    unsupported = _unsupported_param_error(exc, msg)
+    if unsupported is not None:
+        return unsupported
     if isinstance(exc, litellm.ContextWindowExceededError):
         return UpstreamProviderError(msg, http_status=422, error_type="context_length_exceeded")
     if isinstance(exc, litellm.NotFoundError):
@@ -89,7 +106,122 @@ def _translate_error(exc: Exception) -> UpstreamProviderError:
     return UpstreamProviderError(msg, http_status=503, error_type="upstream_error")
 
 
-def is_retryable(exc: Exception) -> bool:
+# Markers a provider/adapter uses when it refuses a parameter it does not
+# understand. Matched against the error text only after the exception type
+# check, so a genuine outage with an unrelated message is unaffected.
+_UNSUPPORTED_PARAM_MARKERS = (
+    "unsupported parameter",
+    "unsupported_parameter",
+    "unrecognized request argument",
+    "unknown parameter",
+    "invalid parameter",
+    "does not support",
+    "not supported for",
+    "unexpected keyword argument",
+    "extra fields not permitted",
+    "extra inputs are not permitted",
+)
+
+_REASONING_MARKERS = ("reasoning", "thinking", "effort")
+
+
+def _names_refused_reasoning(msg: str) -> bool:
+    lowered = msg.lower()
+    return any(m in lowered for m in _UNSUPPORTED_PARAM_MARKERS) and any(
+        t in lowered for t in _REASONING_MARKERS
+    )
+
+
+# Words a provider uses when it refuses the reasoning control we attached.
+# Only consulted for an attempt that actually carried one (see
+# `_refused_reasoning_control`), so an unrelated 400 never matches.
+_REASONING_REFUSAL_TERMS = ("effort", "thinking", "reasoning", "budget")
+
+
+def _refused_reasoning_control(exc: Exception, msg: str) -> bool:
+    """A 400 for an attempt that carried a reasoning control, naming it.
+
+    Providers word this many ways ("Invalid effort value", "Argument not
+    supported on this model: reasoningEffort", "Budget 0 is invalid. This
+    model only works in thinking mode"), so matching marker phrases alone
+    misses most of them and they surfaced as a 503 outage. The attempt is
+    known to have sent reasoning parameters, which is what makes the broader
+    term match safe.
+    """
+    import litellm
+
+    bad_request = getattr(litellm, "BadRequestError", None)
+    is_400 = getattr(exc, "status_code", None) == 400 or (
+        bad_request is not None and isinstance(exc, bad_request)
+    )
+    if not is_400:
+        return False
+    cls = getattr(litellm, "ContextWindowExceededError", None)
+    if cls is not None and isinstance(exc, cls):
+        return False
+    lowered = msg.lower()
+    return any(term in lowered for term in _REASONING_REFUSAL_TERMS)
+
+
+def _unsupported_param_error(exc: Exception, msg: str) -> UpstreamProviderError | None:
+    """Translate a refused-parameter failure into a 4xx compatibility error.
+
+    `litellm.UnsupportedParamsError` is explicit. Providers that reject the
+    field themselves answer with a 400 whose body names the parameter, so the
+    message is checked for both an unsupported-parameter marker and a
+    reasoning-related term — anything else keeps its existing treatment, so a
+    real provider failure is never downgraded to a client error.
+    """
+    import litellm
+
+    cls = getattr(litellm, "UnsupportedParamsError", None)
+    if cls is not None and isinstance(exc, cls):
+        if any(term in msg.lower() for term in _REASONING_MARKERS):
+            return UpstreamProviderError(
+                msg, http_status=400, error_type="unsupported_reasoning_effort"
+            )
+        return UpstreamProviderError(
+            msg, http_status=400, error_type="unsupported_parameter"
+        )
+    status = getattr(exc, "status_code", None)
+    if status != 400:
+        return None
+    lowered = msg.lower()
+    if not any(marker in lowered for marker in _UNSUPPORTED_PARAM_MARKERS):
+        return None
+    if any(term in lowered for term in _REASONING_MARKERS):
+        return UpstreamProviderError(
+            msg, http_status=400, error_type="unsupported_reasoning_effort"
+        )
+    return UpstreamProviderError(msg, http_status=400, error_type="unsupported_parameter")
+
+
+def _thinking_on(params: dict) -> bool:
+    thinking = params.get("thinking")
+    return isinstance(thinking, dict) and thinking.get("type") in ("enabled", "adaptive")
+
+
+def _messages_for_attempt(messages: list, *, keep_thinking: bool) -> list:
+    """Messages for one attempt, with preserved thinking blocks only where needed.
+
+    Signed Anthropic thinking blocks travel on assistant turns as
+    `thinking_blocks`. They go back to an Anthropic model with thinking on —
+    which requires them on a tool loop — and nowhere else: LiteLLM forwards
+    the field verbatim to OpenAI-style providers, which would hand one
+    provider's reasoning (and signature) to another. A request without
+    reasoning therefore reaches every model exactly as before.
+    """
+    if keep_thinking or not any(
+        isinstance(m, dict) and "thinking_blocks" in m for m in messages or []
+    ):
+        return messages
+    return [
+        {k: v for k, v in m.items() if k != "thinking_blocks"} if isinstance(m, dict) else m
+        for m in messages
+    ]
+
+
+def is_retryable(exc: Exception, *, reasoning_sent: bool = False) -> bool:
     """Should a failure on one candidate fail over to the next?
 
     Only failures that are specific to THAT deployment, or transient, fail
@@ -124,6 +256,13 @@ def is_retryable(exc: Exception) -> bool:
         cls = getattr(litellm, name, None)
         if cls is not None and isinstance(exc, cls):
             return True
+    # A model refusing the reasoning control is specific to that model: the
+    # next Auto candidate gets its own translation and may well accept it.
+    if reasoning_sent and _refused_reasoning_control(exc, str(exc)):
+        return True
+    refused = _unsupported_param_error(exc, str(exc))
+    if refused is not None and refused.error_type == "unsupported_reasoning_effort":
+        return True
     bad_request = getattr(litellm, "BadRequestError", None)
     if bad_request is not None and isinstance(exc, bad_request):
         return False
@@ -249,7 +388,19 @@ class GeekCuboLLMClient:
         self._router = Router(**router_kwargs)
         self._deployments = deployments
 
-    async def acompletion(self, *, fallbacks: list | None = None, **kwargs):
+    def _is_anthropic(self, model: str) -> bool:
+        for d in self._deployments or []:
+            if d.model_name == model:
+                return d.provider == "anthropic" or str(d.litellm_model).startswith("anthropic/")
+        return False
+
+    async def acompletion(
+        self,
+        *,
+        fallbacks: list | None = None,
+        model_params: dict[str, dict] | None = None,
+        **kwargs,
+    ):
         """Dispatch a chat completion through the LiteLLM Router.
 
         Returns:
@@ -265,6 +416,12 @@ class GeekCuboLLMClient:
         The `fallbacks` kwarg is passed through to LiteLLM's internal
         `async_function_with_fallbacks` cascade engine in the format
         `[{primary_model: [fb1, fb2, ...]}]`.
+
+        `model_params` maps a model name to provider-specific parameters
+        merged into that model's attempt only (reasoning controls differ per
+        provider, so a fallback must never inherit the primary's
+        translation). A model absent from a non-empty map is skipped: the
+        caller found it unable to honour those parameters.
         """
         if self._router is None:
             raise UpstreamProviderError(
@@ -282,6 +439,8 @@ class GeekCuboLLMClient:
             for entry in fallbacks:
                 for _primary, rest in (entry or {}).items():
                     chain.extend(m for m in (rest or []) if m not in chain)
+        if model_params:
+            chain = [m for m in chain if m in model_params] or chain[:1]
         is_streaming = bool(kwargs.get("stream"))
         # Tool-calling requests trigger litellm's MCP gateway import chain
         # (litellm/responses/mcp/...), which hard-imports the optional `mcp`
@@ -295,17 +454,25 @@ class GeekCuboLLMClient:
         resp = None
         for index, model in enumerate(chain):
             try:
-                resp = await self._router.acompletion(**{**kwargs, "model": model})
+                extra = (model_params or {}).get(model) or {}
+                attempt = {**kwargs, **extra, "model": model}
+                if "messages" in attempt:
+                    attempt["messages"] = _messages_for_attempt(
+                        attempt["messages"],
+                        keep_thinking=self._is_anthropic(model) and _thinking_on(extra),
+                    )
+                resp = await self._router.acompletion(**attempt)
                 break
             except Exception as exc:
-                translated = _translate_error(exc)
+                reasoning_sent = bool(extra)
+                translated = _translate_error(exc, reasoning_sent=reasoning_sent)
                 attempts.append({
                     "model": model,
                     "error_type": translated.error_type,
                     "status": getattr(exc, "status_code", None),
                 })
                 last = index == len(chain) - 1
-                if last or not is_retryable(exc):
+                if last or not is_retryable(exc, reasoning_sent=reasoning_sent):
                     translated.attempts = attempts
                     raise translated from exc
                 import litellm

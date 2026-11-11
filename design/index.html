@@ -332,21 +332,21 @@
         <!-- ─────────────── Overview ─────────────── -->
         <section id="panel-overview" class="panel active">
           <div class="kpi-grid">
-            <article class="kpi-card" data-tooltip="Sum of all upstream costs over the last 7 days">
+            <article class="kpi-card" data-tooltip="Estimated from recorded token usage and configured or catalog prices; not an invoice from your providers">
               <div class="kpi-head">
-                <span class="kpi-label" data-i18n="ov.spend">Spend (7d)</span>
+                <span class="kpi-label" data-i18n="ov.spend_est">Estimated spend (7D)</span>
                 <svg class="kpi-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
               </div>
               <div class="kpi-value" id="kpi-spend">$—</div>
-              <div class="kpi-sub" id="kpi-spend-sub">across 0 requests</div>
+              <div class="kpi-sub" id="kpi-spend-sub" data-i18n="ov.spend_sub">From configured and catalog prices</div>
             </article>
-            <article class="kpi-card kpi-card-accent" data-tooltip="How much cheaper the same traffic was than always using GPT-4o, based on recorded requests.">
+            <article class="kpi-card kpi-card-accent" data-tooltip="Requests recorded in the last 7 days, including failed ones">
               <div class="kpi-head">
-                <span class="kpi-label" data-i18n="ov.savings">Routing savings</span>
-                <svg class="kpi-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                <span class="kpi-label" data-i18n="ov.requests">Requests (7D)</span>
+                <svg class="kpi-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
               </div>
-              <div class="kpi-value" id="kpi-saved">$—</div>
-              <div class="kpi-sub" id="kpi-saved-sub">vs always-GPT-4o</div>
+              <div class="kpi-value" id="kpi-requests">—</div>
+              <div class="kpi-sub" id="kpi-requests-sub">&nbsp;</div>
             </article>
             <article class="kpi-card" data-tooltip="True median latency across the most recent requests (raw samples, not averaged)">
               <div class="kpi-head">
@@ -448,6 +448,7 @@
                   <button class="btn btn-ghost btn-sm" id="ch-sysprompt" data-i18n="chat.system_prompt">System prompt…</button>
                   <div id="ch-model" class="chat-model-select gc-select-host" data-labelledby="ch-model-label"></div>
                   <span id="ch-model-label" class="sr-only" data-i18n="chat.model_aria">Model</span>
+                  <select id="ch-reasoning" class="chat-reasoning-select" aria-label="Reasoning effort" data-i18n-aria="chat.reasoning_aria" title="Reasoning effort" data-i18n-title="chat.reasoning_aria"></select>
                   <button class="icon-btn" id="ch-regen" title="Regenerate reply" data-i18n-title="chat.regenerate" disabled>
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
                   </button>

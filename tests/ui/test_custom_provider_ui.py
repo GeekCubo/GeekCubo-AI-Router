@@ -484,9 +484,10 @@ def test_fetch_discovery_shows_catalog_resolution_and_honours_picked_key(page, l
         model_row = row.locator("tr[data-model-row]").first
         text = model_row.inner_text()
         # The picked key is what the registered model resolved against.
-        assert "resolved" in text.lower()
-        assert "vendor1/apixo-large" in text
-        assert "128,000" in text
+        assert model_row.locator(".match-badge").get_attribute("data-match") == "resolved"
+        assert "vendor1/apixo-large" in model_row.locator("[data-cp-catalog-clear]").get_attribute("data-cp-tip")
+        assert "128K" in text
+        assert "128,000" in model_row.locator(".cp-num .cp-compact").first.get_attribute("data-cp-tip")
         assert "$2.50 / $10.00" in text
 
         # Provider card summarises catalog readiness and flags unpriced models
@@ -524,7 +525,7 @@ def test_registered_ambiguous_model_picks_and_clears_catalog_key(page, live_serv
         page.wait_for_selector("[data-cp-manage-panel]:not([hidden]) tr[data-model-row]", timeout=15_000)
         model_row = row.locator("tr[data-model-row]").first
         assert model_row.locator("[data-cp-catalog]").count() == 1
-        assert "ambiguous" in model_row.inner_text().lower()
+        assert model_row.locator(".match-badge").get_attribute("data-match") == "ambiguous"
 
         # Choosing a key on the registered row re-resolves its metadata and
         # refreshes the provider-level readiness line in place.
@@ -533,7 +534,7 @@ def test_registered_ambiguous_model_picks_and_clears_catalog_key(page, live_serv
         page.wait_for_function(
             "() => { const r = document.querySelector("
             "'[data-cp-manage-panel]:not([hidden]) tr[data-model-row]');"
-            "return r && r.textContent.includes('vendor2/apixo-large') "
+            "return r && r.innerHTML.includes('vendor2/apixo-large') "
             "&& r.textContent.includes('$3.00 / $12.00'); }",
             timeout=15_000,
         )
@@ -543,10 +544,9 @@ def test_registered_ambiguous_model_picks_and_clears_catalog_key(page, live_serv
             timeout=15_000,
         )
         model_row = row.locator("tr[data-model-row]").first
-        text = model_row.inner_text()
-        assert "resolved" in text.lower()
-        assert "vendor2/apixo-large" in text
-        assert "$3.00 / $12.00" in text
+        assert model_row.locator(".match-badge").get_attribute("data-match") == "resolved"
+        assert "vendor2/apixo-large" in model_row.locator("[data-cp-catalog-clear]").get_attribute("data-cp-tip")
+        assert "$3.00 / $12.00" in model_row.inner_text()
 
         # Clearing the override drops back to the ambiguous picker.
         model_row.locator("[data-cp-catalog-clear]").click()
@@ -554,7 +554,7 @@ def test_registered_ambiguous_model_picks_and_clears_catalog_key(page, live_serv
             "() => { const r = document.querySelector("
             "'[data-cp-manage-panel]:not([hidden]) tr[data-model-row]');"
             "return r && !!r.querySelector('[data-cp-catalog]') "
-            "&& r.textContent.toLowerCase().includes('ambiguous'); }",
+            "&& r.querySelector('.match-badge')?.dataset.match === 'ambiguous'; }",
             timeout=15_000,
         )
         page.wait_for_function(
@@ -564,7 +564,7 @@ def test_registered_ambiguous_model_picks_and_clears_catalog_key(page, live_serv
         )
         model_row = row.locator("tr[data-model-row]").first
         assert model_row.locator("[data-cp-catalog]").count() == 1
-        assert "ambiguous" in model_row.inner_text().lower()
+        assert model_row.locator(".match-badge").get_attribute("data-match") == "ambiguous"
     finally:
         _clear_catalog(live_server)
 
@@ -618,36 +618,39 @@ def test_add_selected_populates_catalog_fields_and_provenance_without_guessing(p
 
         small_row = row.locator("tr[data-model-row]").filter(has_text="apixo-small")
         assert row.locator(".cp-detail-row").count() == 0
-        small_text = small_row.inner_text().lower()
-        assert "partial" in small_text
-        assert "resolved" not in small_text
-        assert "65,536" in small_text
-        assert "unknown" in small_text
-        assert small_row.locator('[data-cp-cap="tools"]').input_value() == "supported"
-        assert small_row.locator('[data-cp-cap="vision"]').input_value() == "supported"
-        # JSON mode and JSON schema are separate selects with separate sources.
-        assert small_row.locator('[data-cp-cap="json_mode"]').input_value() == "unknown"
-        assert small_row.locator('[data-cp-cap="json_schema"]').input_value() == "unsupported"
-        # Persisted provenance is on the row without opening Details.
-        assert "via litellm" in small_row.locator('[data-prov="tools"]').inner_text()
-        assert "via litellm" in small_row.locator('[data-prov="vision"]').inner_text()
-        assert "via litellm" in small_row.locator('[data-prov="json_schema"]').inner_text()
-        assert "via litellm" in small_row.locator('[data-prov="context"]').inner_text()
-        assert "via apixo/apixo-small" in small_row.locator('[data-prov="reference_input"]').inner_text()
-        assert "via unknown" in small_row.locator('[data-prov="custom_input"]').inner_text()
+        # Compact row: the catalog status is an icon whose accessible name
+        # carries the status; provenance and exact values are in tooltips.
+        assert small_row.locator(".match-badge").get_attribute("data-match") == "partial"
+        assert "resolved" not in small_row.locator(".match-badge").get_attribute("aria-label").lower()
+        ctx_tip = small_row.locator(".cp-num .cp-compact").first.get_attribute("data-cp-tip")
+        assert "65,536" in ctx_tip and "LiteLLM" in ctx_tip
+        assert small_row.locator(".cp-num .cp-compact").first.inner_text().startswith("65K")
+        assert "unknown" in small_row.inner_text().lower()
+        def cap(r, k):
+            return r.locator(f'[data-cp-cap="{k}"]')
+
+        assert cap(small_row, "tools").get_attribute("data-cap-state") == "supported"
+        assert cap(small_row, "vision").get_attribute("data-cap-state") == "supported"
+        # JSON mode and JSON schema stay separate controls with separate sources.
+        assert cap(small_row, "json_mode").get_attribute("data-cap-state") == "unknown"
+        assert cap(small_row, "json_schema").get_attribute("data-cap-state") == "unsupported"
+        # Persisted provenance is still on the row (tooltip + accessible
+        # name), without opening Details.
+        for k in ("tools", "vision", "json_schema"):
+            assert "Catalog (LiteLLM)" in cap(small_row, k).get_attribute("data-cp-tip")
+            assert "Catalog (LiteLLM)" in cap(small_row, k).get_attribute("aria-label")
+        assert "Catalog apixo/apixo-small" in small_row.locator(".cp-num .cp-compact").nth(1).get_attribute("data-cp-tip")
+        assert "No confirmed custom-provider rate" in small_row.locator(".cp-num .cp-compact").nth(2).get_attribute("data-cp-tip")
 
         # Ambiguous registration: no candidate is guessed, no metadata is
         # inherited, and the searchable picker is offered on the table row.
         large_row = row.locator("tr[data-model-row]").filter(has_text="apixo-large")
-        large_text = large_row.inner_text().lower()
-        assert "ambiguous" in large_text
-        assert "vendor1/apixo-large" not in large_text
+        assert large_row.locator(".match-badge").get_attribute("data-match") == "ambiguous"
+        assert "vendor1/apixo-large" not in large_row.inner_text().lower()
         assert "$2.50" not in large_row.inner_text()
-        assert "128,000" not in large_row.inner_text()
-        assert large_row.locator('[data-cp-cap="tools"]').input_value() == "unknown"
-        assert large_row.locator('[data-cp-cap="vision"]').input_value() == "unknown"
-        assert large_row.locator('[data-cp-cap="json_mode"]').input_value() == "unknown"
-        assert large_row.locator('[data-cp-cap="json_schema"]').input_value() == "unknown"
+        assert "128K" not in large_row.inner_text()
+        for k in ("tools", "vision", "json_mode", "json_schema"):
+            assert large_row.locator(f'[data-cp-cap="{k}"]').get_attribute("data-cap-state") == "unknown"
 
         picker = large_row.locator("[data-cp-catalog]")
         assert picker.count() == 1
@@ -661,7 +664,7 @@ def test_add_selected_populates_catalog_fields_and_provenance_without_guessing(p
         page.wait_for_function(
             "() => { const r = document.querySelector("
             "'[data-cp-manage-panel]:not([hidden]) tr[data-model-row]');"
-            "return r && r.textContent.includes('vendor2/apixo-large') "
+            "return r && r.innerHTML.includes('vendor2/apixo-large') "
             "&& r.textContent.includes('$3.00 / $12.00'); }",
             timeout=15_000,
         )
@@ -671,8 +674,8 @@ def test_add_selected_populates_catalog_fields_and_provenance_without_guessing(p
         assert "1 partial" in readiness
         assert "ambiguous" not in readiness
         picked = row.locator("tr[data-model-row]").filter(has_text="apixo-large")
-        assert picked.locator('[data-cp-cap="tools"]').input_value() == "supported"
-        assert "via litellm" in picked.locator('[data-prov="reference_input"]').inner_text()
+        assert picked.locator('[data-cp-cap="tools"]').get_attribute("data-cap-state") == "supported"
+        assert "Catalog vendor2/apixo-large" in picked.locator(".cp-num .cp-compact").nth(1).get_attribute("data-cp-tip")
     finally:
         _clear_catalog(live_server)
 
@@ -743,9 +746,10 @@ def test_manage_models_toggle_and_manual_model_with_pricing(page, mock_upstream)
     assert "$1.50" in text
     assert "$6.00" in text
     # Header text is CSS-uppercased, so compare case-insensitively. The /1M
-    # unit lives in the column headers ("Reference In / Out /1M" and
-    # "Custom In / Out /1M"), the cell shows the bare dollar value.
-    assert "in / out /1m" in row.locator(".cp-models thead").inner_text().lower()
+    # unit and the in/out order live in the column headers ("Ref. / 1M" and
+    # "Price / 1M", each "in / out"); the cell shows the bare dollar values.
+    head = row.locator(".cp-models thead").inner_text().lower()
+    assert "price / 1m" in head and "ref. / 1m" in head and "in / out" in head
 
 
 def test_ui_never_writes_a_custom_provider_key_row(page, live_server, mock_upstream):

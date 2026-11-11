@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.local_connect import catalog as local_catalog
 from app.local_connect.catalog import read_local_settings
+from app.reasoning import local_thinking_from_metadata
 from packages.db.models.local_connect import LocalMachine, LocalModel
 
 
@@ -25,6 +26,8 @@ class LocalDeploymentView:
     deployment_id: str
     machine_id: str
     model_key: str
+    adapter: str | None = None
+    thinking: tuple[str, ...] | None = None
 
 
 def view_for(machine: LocalMachine, model: LocalModel) -> LocalDeploymentView:
@@ -36,6 +39,8 @@ def view_for(machine: LocalMachine, model: LocalModel) -> LocalDeploymentView:
         deployment_id=f"local::{machine.id}::{model.model_key}",
         machine_id=machine.id,
         model_key=model.model_key,
+        adapter=model.adapter,
+        thinking=local_thinking_from_metadata(model.metadata_json),
     )
 
 

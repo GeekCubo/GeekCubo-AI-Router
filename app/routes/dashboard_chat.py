@@ -31,7 +31,7 @@ from typing import Any, AsyncIterator, Literal
 import anyio
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -281,6 +281,7 @@ def _conversation_out(row: ChatConversation) -> dict:
         "title": row.title,
         "model": row.selected_model,
         "system_prompt": row.system_prompt,
+        "reasoning_effort": getattr(row, "reasoning_effort", None),
         "created_at": iso_utc(row.created_at),
         "updated_at": iso_utc(row.updated_at),
         "last_message_at": iso_utc(row.last_message_at) if row.last_message_at else None,
@@ -308,6 +309,8 @@ def _message_out(row: ChatMessage) -> dict:
         "attachments": json.loads(row.attachments_json) if row.attachments_json else None,
         "mode": row.chat_mode or "normal",
         "knowledge": json.loads(row.knowledge_json) if row.knowledge_json else None,
+        "reasoning_requested": getattr(row, "reasoning_requested", None),
+        "reasoning_effective": getattr(row, "reasoning_effective", None),
     }
 
 
@@ -336,10 +339,43 @@ async def get_conversation(
     return {"conversation": _conversation_out(row), "messages": [_message_out(m) for m in msgs]}
 
 
+_REASONING_DEFAULT = "default"
+
+
+def _reasoning_field(value: Any) -> str | None:
+    """Validate a Chat reasoning selection.
+
+    `"default"` (or an empty value) is the Default choice — no parameter is
+    sent. Anything else must be a normalized level; an unknown value is a
+    422, never silently ignored.
+    """
+    from app.reasoning import ReasoningError, normalize_effort
+
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip().lower() == _REASONING_DEFAULT:
+        return _REASONING_DEFAULT
+    try:
+        return normalize_effort(value) or _REASONING_DEFAULT
+    except ReasoningError as exc:
+        raise ValueError(exc.message) from exc
+
+
+def _effort_or_none(value: str | None) -> str | None:
+    return None if value in (None, _REASONING_DEFAULT) else value
+
+
 class ConversationPatchBody(BaseModel):
     title: str | None = Field(None, max_length=200)
     model: str | None = Field(None, max_length=200)
     system_prompt: str | None = Field(None, max_length=8000)
+    # "default" clears the selection; omitted leaves it unchanged.
+    reasoning_effort: str | None = Field(None, max_length=20)
+
+    @field_validator("reasoning_effort")
+    @classmethod
+    def _check_reasoning(cls, value: Any) -> str | None:
+        return _reasoning_field(value)
 
 
 @router.patch("/conversations/{conversation_id}")
@@ -356,6 +392,8 @@ async def patch_conversation(
         row.selected_model = body.model[:200]
     if body.system_prompt is not None:
         row.system_prompt = body.system_prompt or None
+    if body.reasoning_effort is not None:
+        row.reasoning_effort = _effort_or_none(body.reasoning_effort)
     await db.commit()
     await db.refresh(row)
     return _conversation_out(row)
@@ -432,6 +470,15 @@ class SendMessageBody(BaseModel):
     # "normal" (default) or "knowledge" (Ask GeekCubo: answer from the
     # bundled GeekCubo documentation). Per message, never sticky server-side.
     mode: Literal["normal", "knowledge"] = "normal"
+    # Reasoning effort for this message: a level, or "default" for no
+    # parameter. Omitted = the conversation's stored choice. The choice is
+    # remembered on the conversation so regenerate and reload reuse it.
+    reasoning_effort: str | None = Field(None, max_length=20)
+
+    @field_validator("reasoning_effort")
+    @classmethod
+    def _check_reasoning(cls, value: Any) -> str | None:
+        return _reasoning_field(value)
 
 
 class RegenerateBody(BaseModel):
@@ -444,6 +491,13 @@ class RegenerateBody(BaseModel):
     stream: bool = True
     temperature: float | None = Field(None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(None, ge=1, le=200_000)
+    # Omitted = regenerate with the effort the original question used.
+    reasoning_effort: str | None = Field(None, max_length=20)
+
+    @field_validator("reasoning_effort")
+    @classmethod
+    def _check_reasoning(cls, value: Any) -> str | None:
+        return _reasoning_field(value)
 
 
 def _dashboard_key_context(ac: AdminContext) -> KeyContext:
@@ -752,6 +806,8 @@ class CompletionResult:
         self.trace_id: str | None = None
         self.usage: dict = {}
         self.error_type: str | None = None
+        self.reasoning_requested: str | None = None
+        self.reasoning_effective: str | None = None
 
 
 def _parse_sse_frame(payload: str, out: CompletionResult) -> None:
@@ -976,6 +1032,8 @@ async def _persist_assistant_message(
         ),
         chat_mode="knowledge" if knowledge_state else None,
         knowledge_json=json.dumps(knowledge_state, separators=(",", ":")) if knowledge_state else None,
+        reasoning_requested=result.reasoning_requested,
+        reasoning_effective=result.reasoning_effective,
     )
     db.add(row)
     await db.execute(
@@ -1003,6 +1061,7 @@ async def _run_engine(
     temperature: float | None,
     max_tokens: int | None,
     trace_id: str,
+    reasoning_effort: str | None = None,
 ):
     """Build the OpenAI request and run the shared engine.
 
@@ -1015,6 +1074,10 @@ async def _run_engine(
         payload["temperature"] = temperature
     if max_tokens:
         payload["max_tokens"] = max_tokens
+    if reasoning_effort is not None:
+        # Same field an API client sends; the engine validates it against the
+        # selected model (or the Auto pool) and translates it per provider.
+        payload["reasoning_effort"] = reasoning_effort
     engine_body = ChatCompletionRequest(**payload)
     return await execute_chat(
         engine_body,
@@ -1023,6 +1086,24 @@ async def _run_engine(
         request_source=REQUEST_SOURCE,
         trace_id=trace_id,
     )
+
+
+def _conversation_effort(body_value: str | None, conversation: ChatConversation) -> str | None:
+    """The effort to send: this request's choice, else the conversation's.
+
+    Mirrors model selection — the request wins, the conversation's stored
+    selection is the fallback. Default (None) sends no parameter at all.
+    """
+    if body_value is not None:
+        return _effort_or_none(body_value)
+    return getattr(conversation, "reasoning_effort", None)
+
+
+def _reasoning_from_headers(response: Any, out: CompletionResult) -> None:
+    """Copy the engine's requested/effective effort onto the result."""
+    headers = getattr(response, "headers", None) or {}
+    out.reasoning_requested = headers.get("x-geek-reasoning-requested")
+    out.reasoning_effective = headers.get("x-geek-reasoning-effective")
 
 
 def _blocking_result(response: JSONResponse) -> CompletionResult:
@@ -1153,6 +1234,7 @@ async def send_message(
     conversation = await _get_live_conversation(db, ac.workspace_id, conversation_id)
     settings = await _load_settings(db, ac.workspace_id)
     model = body.model or conversation.selected_model or settings.default_model or "auto"
+    reasoning_effort = _conversation_effort(body.reasoning_effort, conversation)
 
     from app.routes.chat_attachments import attachments_by_ids
 
@@ -1284,6 +1366,7 @@ async def send_message(
             role="user",
             content=stored_content,
             chat_mode="knowledge" if knowledge_state is not None else None,
+            reasoning_requested=reasoning_effort,
             attachments_json=(
                 json.dumps(attachment_refs, separators=(",", ":"))
                 if attachment_refs else None
@@ -1296,6 +1379,10 @@ async def send_message(
                 ref.get("name", "") for ref in attachment_refs
             )
             conversation.title = " ".join(title_source.split())[:60]
+        if body.reasoning_effort is not None:
+            # Remember the selection like the model choice: regenerate and a
+            # reload use it without the browser having to resend it.
+            conversation.reasoning_effort = _effort_or_none(body.reasoning_effort)
         conversation.last_message_at = datetime.now(timezone.utc)
         await db.commit()
         await db.refresh(user_row)
@@ -1315,6 +1402,7 @@ async def send_message(
             stream=body.stream,
             temperature=body.temperature if body.temperature is not None else settings.temperature,
             max_tokens=body.max_tokens if body.max_tokens else settings.max_tokens,
+            reasoning_effort=reasoning_effort,
         )
     except HTTPException as err:
         # Pre-stream failure (no candidates, upstream 4xx/5xx). Surface the
@@ -1322,7 +1410,13 @@ async def send_message(
         await db.rollback()
         return JSONResponse(
             status_code=err.status_code,
-            content={"error": {"message": err.detail, "type": "engine_error"}},
+            content={"error": {
+                "message": err.detail,
+                "type": "engine_error",
+                # The engine's own classification (e.g.
+                # unsupported_reasoning_effort) so the UI can act on it.
+                "code": (err.headers or {}).get("x-geek-error-type"),
+            }},
         )
 
     if not settings.save_history:
@@ -1340,6 +1434,7 @@ async def send_message(
     conversation_id = conversation.id
     if isinstance(response, StreamingResponse):
         async def _on_done(result: CompletionResult) -> None:
+            _reasoning_from_headers(response, result)
             await _persist_assistant_message(
                 db, conversation_id=conversation_id, workspace_id=ac.workspace_id,
                 result=result, requested_model=requested_model,
@@ -1352,6 +1447,7 @@ async def send_message(
 
     result = _blocking_result(response)
     result.trace_id = trace_id
+    _reasoning_from_headers(response, result)
     message = await _persist_assistant_message(
         db, conversation_id=conversation_id, workspace_id=ac.workspace_id,
         result=result, requested_model=requested_model,
@@ -1406,6 +1502,14 @@ async def regenerate_message(
         row.is_deleted = 1
     await db.commit()
 
+    # Regenerate with the effort the stored question used unless the request
+    # names one; NULL on the stored row (Default, or a pre-feature message)
+    # means no parameter, exactly as the original was sent.
+    if body.reasoning_effort is not None:
+        reasoning_effort = _effort_or_none(body.reasoning_effort)
+    else:
+        reasoning_effort = getattr(last_user, "reasoning_requested", None)
+
     # Regenerate in the same mode as the stored question.
     knowledge_state: dict | None = None
     knowledge_block: str | None = None
@@ -1447,17 +1551,25 @@ async def regenerate_message(
             stream=body.stream,
             temperature=body.temperature if body.temperature is not None else settings.temperature,
             max_tokens=body.max_tokens if body.max_tokens else settings.max_tokens,
+            reasoning_effort=reasoning_effort,
         )
     except HTTPException as err:
         await db.rollback()
         return JSONResponse(
             status_code=err.status_code,
-            content={"error": {"message": err.detail, "type": "engine_error"}},
+            content={"error": {
+                "message": err.detail,
+                "type": "engine_error",
+                # The engine's own classification (e.g.
+                # unsupported_reasoning_effort) so the UI can act on it.
+                "code": (err.headers or {}).get("x-geek-error-type"),
+            }},
         )
 
     if not isinstance(response, StreamingResponse):
         result = _blocking_result(response)
         result.trace_id = trace_id
+        _reasoning_from_headers(response, result)
 
         message = await _persist_assistant_message(
             db, conversation_id=conversation.id, workspace_id=ac.workspace_id,
@@ -1473,6 +1585,7 @@ async def regenerate_message(
     conversation_id = conversation.id
 
     async def _on_done(result: CompletionResult) -> None:
+        _reasoning_from_headers(response, result)
         await _persist_assistant_message(
             db, conversation_id=conversation_id, workspace_id=ac.workspace_id,
             result=result, requested_model=requested_model,

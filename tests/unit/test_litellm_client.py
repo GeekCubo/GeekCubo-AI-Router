@@ -312,3 +312,116 @@ async def test_acompletion_stream_raises_no_providers_when_router_is_none():
             messages=[{"role": "user", "content": "hi"}],
             stream=True,
         )
+
+
+# ── reasoning effort: per-model params, error mapping, retry ─────────────
+
+
+def _two_model_client(monkeypatch, side_effect):
+    from packages.litellm_adapter.client import GeekCuboLLMClient
+    from packages.litellm_adapter.types import ProviderDeployment
+
+    deployments = [
+        ProviderDeployment(model_name=n, litellm_model=f"openai/{n}",
+                           api_key="sk-test", provider="openai")
+        for n in ("o3", "gpt-5", "gpt-4o")
+    ]
+    fake_router = MagicMock()
+    fake_router.acompletion = AsyncMock(side_effect=side_effect)
+    import litellm
+    monkeypatch.setattr(litellm, "Router", lambda **_: fake_router)
+    return GeekCuboLLMClient(deployments=deployments, strategy="balanced"), fake_router
+
+
+def _ok(model):
+    resp = MagicMock()
+    resp.model_dump.return_value = {"model": model, "choices": [], "usage": {}}
+    resp._hidden_params = {}
+    return resp
+
+
+async def test_model_params_merged_per_attempt_and_chain_filtered(monkeypatch):
+    import litellm
+
+    async def _side(**kw):
+        if kw["model"] == "o3":
+            raise litellm.InternalServerError("boom", llm_provider="openai", model="o3")
+        return _ok(kw["model"])
+
+    client, router = _two_model_client(monkeypatch, _side)
+    await client.acompletion(
+        model="o3",
+        messages=[{"role": "user", "content": "hi"}],
+        fallbacks=[{"o3": ["gpt-4o", "gpt-5"]}],
+        model_params={"o3": {"reasoning_effort": "high"},
+                      "gpt-5": {"reasoning_effort": "low"}},
+    )
+    calls = [c.kwargs for c in router.acompletion.await_args_list]
+    # gpt-4o is absent from model_params, so it is never attempted.
+    assert [c["model"] for c in calls] == ["o3", "gpt-5"]
+    assert calls[0]["reasoning_effort"] == "high"
+    # The fallback gets its own translation, not the primary's.
+    assert calls[1]["reasoning_effort"] == "low"
+
+
+async def test_no_model_params_keeps_original_chain(monkeypatch):
+    client, router = _two_model_client(monkeypatch, lambda **kw: _ok(kw["model"]))
+    await client.acompletion(model="gpt-4o", messages=[{"role": "user", "content": "hi"}])
+    call = router.acompletion.await_args.kwargs
+    assert "reasoning_effort" not in call and "model_params" not in call
+
+
+def test_unsupported_reasoning_maps_to_400_not_503():
+    import litellm
+
+    from packages.litellm_adapter.client import _translate_error
+
+    exc = litellm.UnsupportedParamsError(
+        message="openai does not support parameters: ['reasoning_effort']",
+        llm_provider="openai", model="gpt-4o",
+    )
+    err = _translate_error(exc)
+    assert err.http_status == 400
+    assert err.error_type == "unsupported_reasoning_effort"
+
+    other = litellm.UnsupportedParamsError(
+        message="does not support parameters: ['logit_bias']",
+        llm_provider="openai", model="x",
+    )
+    assert _translate_error(other).error_type == "unsupported_parameter"
+
+
+def test_provider_400_naming_reasoning_is_a_compat_error():
+    import litellm
+
+    from packages.litellm_adapter.client import _translate_error, is_retryable
+
+    exc = litellm.BadRequestError(
+        message="Unsupported parameter: 'reasoning_effort' is not supported with this model.",
+        llm_provider="openai", model="gpt-4o",
+    )
+    err = _translate_error(exc)
+    assert (err.http_status, err.error_type) == (400, "unsupported_reasoning_effort")
+    # Model-specific refusal: the next candidate may accept it.
+    assert is_retryable(exc)
+
+
+def test_unrelated_bad_request_is_unchanged():
+    import litellm
+
+    from packages.litellm_adapter.client import is_retryable
+
+    exc = litellm.BadRequestError(
+        message="messages: field required", llm_provider="openai", model="x"
+    )
+    assert not is_retryable(exc)
+
+
+def test_local_runtime_refusing_think_is_a_compat_error():
+    from packages.litellm_adapter.client import _translate_error
+
+    exc = Exception('"qwen2" does not support thinking')
+    exc.geek_local_code = "local_upstream_error"
+    exc.geek_local_status = 502
+    err = _translate_error(exc)
+    assert (err.http_status, err.error_type) == (400, "unsupported_reasoning_effort")

@@ -472,3 +472,27 @@ async def test_explain_simulator_candidates_and_unknown_profile(env):
 
     r = await c.get("/api/routing/explain", params={"profile": "does-not-exist"})
     assert r.status_code == 404
+
+
+async def test_routing_models_publishes_reasoning_levels(env):
+    c, up, _ = env
+    prov = await _provider(c, up)
+    await _models(c, prov["id"], [("plain-model", True, 1.0, None)])
+    body = (await c.get("/api/routing/models", params={"scope": "custom"})).json()
+    # A custom model with no evidence is Unknown (null), never "unsupported".
+    assert body["models"][0]["reasoning_levels"] is None
+    assert body["auto_reasoning_levels"] == []
+
+
+def test_auto_reasoning_levels_union_in_canonical_order():
+    from types import SimpleNamespace
+
+    from app.routes.console import _auto_reasoning_levels
+
+    pool = [
+        SimpleNamespace(reasoning_levels=("high", "low")),
+        SimpleNamespace(reasoning_levels=None),
+        SimpleNamespace(reasoning_levels=("none", "xhigh")),
+        SimpleNamespace(reasoning_levels=()),
+    ]
+    assert _auto_reasoning_levels(pool) == ["none", "low", "high", "xhigh"]

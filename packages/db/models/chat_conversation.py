@@ -34,6 +34,9 @@ class ChatConversation(Base, UUIDMixin, TimestampMixin, SoftDeleteMixin):
     selected_model: Mapped[str] = mapped_column(String(200), nullable=False, server_default="")
     # System prompt override for this conversation; NULL = use settings.
     system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Reasoning effort chosen for this conversation (app.reasoning.LEVELS);
+    # NULL = Default, i.e. the parameter is not sent at all.
+    reasoning_effort: Mapped[str | None] = mapped_column(String(20), nullable=True)
     last_message_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -70,6 +73,10 @@ class ChatMessage(Base, UUIDMixin, SoftDeleteMixin):
     # Documentation sources actually retrieved for this answer:
     # [{id,title,heading,reference,path}], plus the docs version.
     knowledge_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Reasoning effort asked for and actually applied (they differ only when
+    # the routing policy downgraded it). NULL = Default / not reported.
+    reasoning_requested: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    reasoning_effective: Mapped[str | None] = mapped_column(String(20), nullable=True)
     trace_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)

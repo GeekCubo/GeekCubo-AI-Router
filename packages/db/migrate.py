@@ -502,6 +502,23 @@ async def ensure_chat_columns(engine) -> None:
             await _apply_ddl(conn, "ALTER TABLE chat_messages ADD COLUMN chat_mode VARCHAR(20)")
         if "knowledge_json" not in message_cols:
             await _apply_ddl(conn, "ALTER TABLE chat_messages ADD COLUMN knowledge_json TEXT")
+        # Reasoning effort. NULL everywhere for existing rows = Default.
+        for name in ("reasoning_requested", "reasoning_effective"):
+            if name not in message_cols:
+                await _apply_ddl(
+                    conn, f"ALTER TABLE chat_messages ADD COLUMN {name} VARCHAR(20)"
+                )
+        conversation_cols = {
+            c["name"]
+            for c in await conn.run_sync(
+                lambda sync: inspect(sync).get_columns("chat_conversations")
+            )
+        }
+        if "reasoning_effort" not in conversation_cols:
+            await _apply_ddl(
+                conn,
+                "ALTER TABLE chat_conversations ADD COLUMN reasoning_effort VARCHAR(20)",
+            )
 
 
 async def ensure_chat_search_columns(engine) -> None:

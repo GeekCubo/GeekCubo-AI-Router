@@ -193,6 +193,11 @@ def _completion_params(optional_params: dict) -> dict:
         "presence_penalty",
         "frequency_penalty",
         "parallel_tool_calls",
+        # Reasoning controls, already translated for the serving runtime by
+        # app.reasoning: Ollama takes `think`, OpenAI-compatible servers take
+        # `reasoning_effort`. Forwarded verbatim; absent unless requested.
+        "think",
+        "reasoning_effort",
     ):
         if key in optional_params and optional_params[key] is not None:
             out[key] = optional_params[key]

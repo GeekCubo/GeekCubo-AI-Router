@@ -534,3 +534,42 @@ def test_function_declaration_with_non_string_description_rejected():
             ]}],
         })
     assert exc.value.status_code == 400
+
+
+# ── thinkingConfig → normalized reasoning_effort ──
+
+
+@pytest.mark.parametrize(
+    "tc,expected",
+    [
+        ({"thinkingLevel": "high"}, "high"),
+        ({"thinking_level": "LOW"}, "low"),
+        ({"thinkingBudget": 0}, "none"),
+        ({"thinkingBudget": -1}, None),
+        ({"thinkingBudget": 2048}, "medium"),
+        ({"includeThoughts": True}, None),
+    ],
+)
+def test_thinking_config_maps_to_reasoning_effort(tc, expected):
+    out = _translate({
+        "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
+        "generationConfig": {"thinkingConfig": tc},
+    })
+    assert out.get("reasoning_effort") == expected
+
+
+def test_no_thinking_config_sets_nothing():
+    out = _translate({"contents": [{"role": "user", "parts": [{"text": "hi"}]}]})
+    assert "reasoning_effort" not in out
+
+
+@pytest.mark.parametrize(
+    "tc", [{"thinkingLevel": "ultra"}, {"thinkingBudget": -5}, {"thinkingBudget": "lots"}, "on"]
+)
+def test_invalid_thinking_config_is_rejected(tc):
+    with pytest.raises(HTTPException) as exc:
+        _translate({
+            "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
+            "generationConfig": {"thinkingConfig": tc},
+        })
+    assert exc.value.status_code == 400

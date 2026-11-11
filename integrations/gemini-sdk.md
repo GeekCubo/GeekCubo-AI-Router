@@ -53,8 +53,12 @@ logs; the header form doesn't.
   server-side tools (`googleSearch`, `codeExecution`, `urlContext`)
   return 400. Function declarations are fully supported (uppercase proto
   type enums are normalized automatically).
-- `safetySettings`, `thinkingConfig`, and `topK` are dropped; `thought` /
+- `safetySettings` and `topK` are dropped; `thought` /
   `thoughtSignature` parts in history are dropped the same way.
+- `thinkingConfig` (`thinkingLevel`, or `thinkingBudget`: `0` off, `-1`
+  model default, positive → nearest level) becomes GeekCubo's normalized
+  reasoning effort. A model that cannot honour it returns 400
+  `INVALID_ARGUMENT`. See [Reasoning effort](../docs/reasoning.md).
 - `stopSequences` beyond the OpenAI wire cap of 4 are truncated to the
   first 4 (a `structlog` warning is emitted).
 - Streaming keeps text and `functionCall` parts in the model's order

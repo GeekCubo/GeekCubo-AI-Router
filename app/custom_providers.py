@@ -404,6 +404,124 @@ def _is_json(resp: httpx.Response) -> bool:
     return "application/json" in resp.headers.get("content-type", "")
 
 
+# A level is honoured only if this many reasoning tokens (or that much
+# reasoning text) separate it from the request without it. Tiny prompts make
+# the signal small, so the probe asks for a little arithmetic.
+_PROBE_PROMPT = "What is 17 * 23? Answer with the number only."
+_PROBE_MAX_TOKENS = 256
+# Low/high bracket the classic ladder; a deliberately invalid value tells an
+# endpoint that validates the field from one that ignores it.
+_PROBE_LEVELS = ("low", "high")
+_PROBE_INVALID = "geekcubo-invalid-level"
+# Minimum absolute reasoning-token separation treated as a real difference.
+_PROBE_MIN_GAP = 16
+
+
+def _reasoning_signal(body: dict) -> int | None:
+    """Reasoning tokens (or reasoning-text length) in a completion, or None."""
+    usage = body.get("usage") if isinstance(body, dict) else None
+    details = (usage or {}).get("completion_tokens_details") if isinstance(usage, dict) else None
+    if isinstance(details, dict) and isinstance(details.get("reasoning_tokens"), int):
+        return details["reasoning_tokens"]
+    choices = body.get("choices") if isinstance(body, dict) else None
+    msg = (choices[0].get("message") if choices and isinstance(choices[0], dict) else None) or {}
+    for key in ("reasoning_content", "reasoning"):
+        if isinstance(msg.get(key), str):
+            return len(msg[key]) // 4
+    return None
+
+
+async def probe_reasoning(
+    *,
+    base_url: str,
+    api_key: str,
+    model: str,
+    allowed_local_hosts: str | None = None,
+) -> dict:
+    """Administrator-triggered, bounded check of `reasoning_effort` on one model.
+
+    At most four tiny completions (default, low, high, one invalid value), no
+    retries, short timeouts. Conclusions are drawn only from evidence the
+    provider returns:
+
+      * the invalid value is rejected with a 4xx  → the endpoint validates the
+        field; levels it accepted are recorded as supported;
+      * accepted AND reasoning usage moves with the level → supported;
+      * everything accepted with no difference, including the invalid value →
+        the endpoint ignores the field: recorded as no effort control;
+      * anything else (outage, rate limit, 5xx, ambiguous signal) → no
+        conclusion. Transient failures never become a permanent capability.
+
+    The credential is only ever sent to `base_url` and never returned.
+    """
+    try:
+        normalized = validate_base_url(base_url, allowed_local_hosts=allowed_local_hosts)
+    except CustomProviderValidationError as exc:
+        return {"ok": False, "conclusive": False, "error": str(exc), "error_type": "invalid_url"}
+    url = _request_url(normalized, "/chat/completions")
+    samples: dict[str, dict] = {}
+    timeout = httpx.Timeout(30.0, connect=10.0)
+    try:
+        async with httpx.AsyncClient(follow_redirects=False, timeout=timeout) as client:
+            for label in ("default", *_PROBE_LEVELS, "invalid"):
+                body = {"model": model, "max_tokens": _PROBE_MAX_TOKENS,
+                        "messages": [{"role": "user", "content": _PROBE_PROMPT}]}
+                if label != "default":
+                    body["reasoning_effort"] = _PROBE_INVALID if label == "invalid" else label
+                resp = await client.post(url, json=body, headers={"Authorization": f"Bearer {api_key}"})
+                data = resp.json() if _is_json(resp) else {}
+                samples[label] = {
+                    "status": resp.status_code,
+                    "signal": _reasoning_signal(data) if resp.is_success else None,
+                }
+                if label == "default" and not resp.is_success:
+                    break  # the model itself is not answering: no conclusion
+    except httpx.HTTPError as exc:
+        return {"ok": False, "conclusive": False, "error_type": "connect_error",
+                "error": f"probe failed: {type(exc).__name__}", "samples": samples}
+
+    def status(label: str) -> int | None:
+        return (samples.get(label) or {}).get("status")
+
+    result: dict = {"ok": True, "conclusive": False, "samples": samples, "levels": None}
+    if status("default") != 200:
+        result.update(ok=False, error_type="model_unavailable",
+                      error=f"default request returned HTTP {status('default')}")
+        return result
+    if any((status(lv) or 0) >= 500 or status(lv) in (408, 429) for lv in (*_PROBE_LEVELS, "invalid")):
+        result.update(error_type="transient", error="transient upstream failure; nothing recorded")
+        return result
+    accepted = [lv for lv in _PROBE_LEVELS if status(lv) == 200]
+    invalid = status("invalid")
+    signals = {lv: samples[lv]["signal"] for lv in accepted}
+    # Sampling noise moves reasoning usage by a few tokens on its own (a live
+    # gateway ignoring the field showed 5 → 6), so only a clear separation
+    # counts: high must exceed low by both a ratio and an absolute margin,
+    # AND the invalid value must not look like a real level.
+    def _clearly_more(a: int | None, b: int | None) -> bool:
+        return a is not None and b is not None and a >= max(2 * b, b + _PROBE_MIN_GAP)
+
+    moved = (len(accepted) == 2 and None not in signals.values()
+             and _clearly_more(signals["high"], signals["low"])
+             and not _clearly_more(samples["invalid"]["signal"], signals["low"]))
+    if invalid is not None and 400 <= invalid < 500:
+        # Validates the field: what it accepted, it understands.
+        result.update(conclusive=True, levels=accepted, basis="invalid value rejected")
+    elif invalid == 200 and moved:
+        result.update(conclusive=True, levels=accepted, basis="reasoning usage follows the level")
+    elif invalid == 200 and len(accepted) == 2 and None not in signals.values() \
+            and samples["default"]["signal"] is not None \
+            and not _clearly_more(signals["high"], signals["low"]) \
+            and not _clearly_more(signals["low"], signals["high"]) \
+            and abs(signals["high"] - samples["default"]["signal"]) < _PROBE_MIN_GAP:
+        result.update(conclusive=True, levels=[],
+                      basis="any value accepted with identical reasoning usage; field ignored")
+    else:
+        result.update(error_type="inconclusive",
+                      error="the provider gave no evidence that the level changes anything")
+    return result
+
+
 def _parse_models_body(body_text: str) -> tuple[list[dict], str | None]:
     """Parse an OpenAI-compatible `GET /models` body.
 
@@ -669,9 +787,10 @@ def custom_catalog_entries(
         for m in prov.models:
             if getattr(m, "is_enabled", True) is False:
                 continue
+            model_id = namespaced_model_id(prov.slug, m.id)
             out.append(
                 CatalogModel(
-                    id=namespaced_model_id(prov.slug, m.id),
+                    id=model_id,
                     provider=prov.slug,
                     litellm_prefix="openai/",
                     supports_tools=catalog_support(m, "tools"),
@@ -684,6 +803,13 @@ def custom_catalog_entries(
                     custom_input_cost_per_token=m.custom_input_cost_per_token,
                     custom_output_cost_per_token=m.custom_output_cost_per_token,
                     price_source=getattr(m, "price_source", "catalog"),
+                    # Only this endpoint's own evidence (administrator
+                    # override or a fresh verification). A gateway serving a
+                    # well-known model name may still ignore the field, so a
+                    # name match in LiteLLM is never borrowed: without
+                    # evidence the model stays Unknown, which Auto still
+                    # attempts with the effort preserved.
+                    reasoning_levels=m.reasoning_levels,
                 )
             )
     return out
@@ -791,13 +917,19 @@ def explain_auto_exclusions(
 # ── cached provider loader ─────────────────────────────────────────────────
 
 
-def _models_to_catalog(models: list) -> list[CatalogModel]:
+def _models_to_catalog(models: list, base_url: str | None = None) -> list[CatalogModel]:
     out: list[CatalogModel] = []
-    from app.model_metadata import catalog_support, effective_custom_price, effective_routing_price
+    from app.model_metadata import (
+        catalog_support,
+        effective_custom_price,
+        effective_routing_price,
+        endpoint_reasoning_levels,
+    )
 
     for m in models:
         custom_in, custom_out, _custom_state = effective_custom_price(m)
         route_in, route_out, route_source = effective_routing_price(m)
+        reasoning_levels, _source = endpoint_reasoning_levels(m, base_url)
         out.append(
             CatalogModel(
                 id=m.model_id,  # bare id here; namespacing applied by callers
@@ -813,6 +945,7 @@ def _models_to_catalog(models: list) -> list[CatalogModel]:
                 custom_input_cost_per_token=custom_in or 0.0,
                 custom_output_cost_per_token=custom_out or 0.0,
                 price_source=route_source,
+                reasoning_levels=reasoning_levels,
             )
         )
     return out
@@ -848,7 +981,7 @@ async def _query_providers(db) -> list[CustomProviderView]:
             api_key = decrypt_credential(row.encrypted_key)
         except Exception:
             api_key = ""  # undecryptable → skipped at deployment time
-        models = _models_to_catalog(by_provider.get(row.id, []))
+        models = _models_to_catalog(by_provider.get(row.id, []), row.base_url)
         out.append(
             CustomProviderView(
                 slug=row.slug,

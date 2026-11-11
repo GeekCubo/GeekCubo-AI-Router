@@ -42,6 +42,8 @@ def cache_key(
     presence_penalty: float | None = None,
     frequency_penalty: float | None = None,
     logit_bias: dict[int, float] | None = None,
+    reasoning_effort: str | None = None,
+    reasoning_effective: str | None = None,
 ) -> str:
     """Deterministic SHA-256 key over every input that shapes the output.
 
@@ -93,7 +95,18 @@ def cache_key(
         "presence_penalty": presence_penalty,
         "frequency_penalty": frequency_penalty,
         "logit_bias": logit_bias,
+        # Reasoning changes the computation, so it must change the key. Two
+        # requests that differ only in effort (low vs high) would otherwise
+        # share an entry and serve one caller the other's answer. Both the
+        # requested and the effective level are recorded: an explicit-effort
+        # request must not collide with the same prompt sent with no effort,
+        # and a downgraded request must not be reused as the level it asked
+        # for. Added only when set, so requests that never mention reasoning
+        # hash exactly as before and keep their existing cache entries.
     }
+    if reasoning_effort is not None or reasoning_effective is not None:
+        payload["reasoning_effort"] = reasoning_effort
+        payload["reasoning_effective"] = reasoning_effective
     blob = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(blob).hexdigest()
 

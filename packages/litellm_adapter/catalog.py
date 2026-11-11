@@ -99,6 +99,11 @@ class CatalogModel:
     # supports_json_mode: LiteLLM reports `supports_response_schema`, which is
     # evidence for structured outputs only — it never grants JSON mode.
     supports_json_schema: bool | None = None
+    # Reasoning-effort levels this model can actually honour, in ladder order.
+    # None means Unknown (the source is silent) — never "unsupported". An
+    # empty tuple means the model is known to have no effort control. See
+    # app.reasoning for how the set is derived and translated.
+    reasoning_levels: tuple[str, ...] | None = None
 
 
 def _is_obviously_dead(meta: dict) -> bool:
@@ -167,6 +172,9 @@ def _build_catalog_from_litellm() -> list[CatalogModel]:
         seen.add(canonical)
 
         dep_raw = meta.get("deprecation_date")
+        from app.reasoning import catalog_levels
+
+        reasoning_levels, _blocked = catalog_levels(canonical, provider_id)
         out.append(
             CatalogModel(
                 id=canonical,
@@ -186,6 +194,7 @@ def _build_catalog_from_litellm() -> list[CatalogModel]:
                 input_cost_per_token=float(meta.get("input_cost_per_token") or 0.0),
                 output_cost_per_token=float(meta.get("output_cost_per_token") or 0.0),
                 deprecation_date=dep_raw if isinstance(dep_raw, str) and dep_raw else None,
+                reasoning_levels=reasoning_levels,
             )
         )
 
