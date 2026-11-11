@@ -943,3 +943,99 @@ async def test_stored_attachment_files_are_not_publicly_reachable(dash_env):
             r = await anon.get(path)
             assert r.status_code in (401, 403), (path, r.status_code)
             assert secret not in r.content
+
+
+# ── reasoning effort ───────────────────────────────────────────────────────
+
+
+def _deploy_o3(fake):
+    from packages.litellm_adapter.types import ProviderDeployment
+
+    fake._deployments = [
+        ProviderDeployment(model_name=n, litellm_model=f"openai/{n}",
+                           api_key="sk-test", provider="openai")
+        for n in ("o3", "gpt-4o-mini")
+    ]
+
+
+async def test_reasoning_patch_sets_and_default_clears(dash_env):
+    client, _, _ = dash_env
+    convo = (await client.post("/api/chat/conversations", json={})).json()
+    assert convo["reasoning_effort"] is None
+    url = f"/api/chat/conversations/{convo['id']}"
+    assert (await client.patch(url, json={"reasoning_effort": "High"})).json()["reasoning_effort"] == "high"
+    # Omitted leaves it unchanged.
+    assert (await client.patch(url, json={"title": "x"})).json()["reasoning_effort"] == "high"
+    assert (await client.patch(url, json={"reasoning_effort": "default"})).json()["reasoning_effort"] is None
+    r = await client.patch(url, json={"reasoning_effort": "turbo"})
+    assert r.status_code == 422
+
+
+async def test_send_persists_requested_and_effective_and_regenerate_reuses(dash_env):
+    client, fake, _ = dash_env
+    _deploy_o3(fake)
+    convo = (await client.post("/api/chat/conversations", json={})).json()
+    r = await client.post(
+        f"/api/chat/conversations/{convo['id']}/messages",
+        json={"content": "hi", "model": "o3", "stream": False, "reasoning_effort": "low"},
+    )
+    assert r.status_code == 200, r.text
+    assert fake.acompletion.await_args.kwargs["model_params"] == {"o3": {"reasoning_effort": "low"}}
+    msg = r.json()["message"]
+    assert msg["reasoning_requested"] == "low"
+    assert msg["reasoning_effective"] == "low"
+
+    data = (await client.get(f"/api/chat/conversations/{convo['id']}")).json()
+    assert data["conversation"]["reasoning_effort"] == "low"
+    assert data["messages"][0]["reasoning_requested"] == "low"
+
+    r = await client.post(
+        f"/api/chat/conversations/{convo['id']}/regenerate",
+        json={"model": "o3", "stream": False},
+    )
+    assert r.status_code == 200, r.text
+    assert fake.acompletion.await_args.kwargs["model_params"] == {"o3": {"reasoning_effort": "low"}}
+
+    # The sticky conversation value is used when the message omits it.
+    await client.post(
+        f"/api/chat/conversations/{convo['id']}/messages",
+        json={"content": "again", "model": "o3", "stream": False},
+    )
+    assert fake.acompletion.await_args.kwargs["model_params"] == {"o3": {"reasoning_effort": "low"}}
+
+
+async def test_default_reasoning_sends_no_parameter(dash_env):
+    client, fake, _ = dash_env
+    _deploy_o3(fake)
+    convo = (await client.post("/api/chat/conversations", json={})).json()
+    r = await client.post(
+        f"/api/chat/conversations/{convo['id']}/messages",
+        json={"content": "hi", "model": "o3", "stream": False, "reasoning_effort": "default"},
+    )
+    assert r.status_code == 200, r.text
+    kwargs = fake.acompletion.await_args.kwargs
+    assert "model_params" not in kwargs and "reasoning_effort" not in kwargs
+    assert r.json()["message"]["reasoning_effective"] is None
+
+
+async def test_unsupported_reasoning_returns_compat_error_code(dash_env):
+    client, fake, _ = dash_env
+    _deploy_o3(fake)
+    convo = (await client.post("/api/chat/conversations", json={})).json()
+    r = await client.post(
+        f"/api/chat/conversations/{convo['id']}/messages",
+        json={"content": "hi", "model": "gpt-4o-mini", "stream": False, "reasoning_effort": "high"},
+    )
+    assert r.status_code == 400, r.text
+    assert r.json()["error"]["code"] == "unsupported_reasoning_effort"
+    fake.acompletion.assert_not_awaited()
+
+
+async def test_invalid_reasoning_on_send_is_422(dash_env):
+    client, _, _ = dash_env
+    convo = (await client.post("/api/chat/conversations", json={})).json()
+    r = await client.post(
+        f"/api/chat/conversations/{convo['id']}/messages",
+        json={"content": "hi", "stream": False, "reasoning_effort": "ultra"},
+    )
+    assert r.status_code == 422

@@ -513,6 +513,100 @@ def catalog_support(model, capability: str) -> bool | None:
     return _STATE_TO_TRI[capability_state(model, capability)]
 
 
+# ── Reasoning effort (per deployment) ─────────────────────────────────────
+#
+# Reasoning support is a property of THIS endpoint serving THIS model id, not
+# of the model's name: a gateway may ignore the field, a fine-tune may keep or
+# lose the control, a runtime may expose it differently. It therefore lives in
+# the model's own metadata, alongside the other per-deployment evidence, with
+# provenance. Two sources, in priority order:
+#   manual.reasoning      — administrator override (never replaced by probes)
+#   reasoning.observed    — a bounded, administrator-triggered verification
+# With neither, the caller falls back to LiteLLM metadata (built-in providers
+# only) and otherwise to Unknown.
+
+REASONING_OBSERVATION_TTL_DAYS = 30
+
+
+def reasoning_override(model) -> dict[str, Any] | None:
+    """The administrator's reasoning setting: {"levels": [...]} or None."""
+    meta = load_metadata(getattr(model, "metadata_json", None))
+    entry = _manual(meta).get("reasoning")
+    return entry if isinstance(entry, dict) and isinstance(entry.get("levels"), list) else None
+
+
+def set_reasoning_override(model, levels: list[str] | None) -> None:
+    """Set (a list, possibly empty = no effort control) or clear (None)."""
+    from app.reasoning import LEVELS
+
+    meta = load_metadata(getattr(model, "metadata_json", None))
+    manual = meta.setdefault("manual", {})
+    if levels is None:
+        manual.pop("reasoning", None)
+    else:
+        bad = [lv for lv in levels if lv not in LEVELS]
+        if bad:
+            raise ValueError("unknown reasoning level(s): " + ", ".join(bad))
+        manual["reasoning"] = {
+            "levels": [lv for lv in LEVELS if lv in set(levels)],
+            "set_at": datetime.now(timezone.utc).isoformat(),
+        }
+    model.metadata_json = dump_metadata(meta)
+
+
+def reasoning_observation(model) -> dict[str, Any] | None:
+    """The last verification result, if still fresh."""
+    meta = load_metadata(getattr(model, "metadata_json", None))
+    obs = (meta.get("reasoning") or {}).get("observed") if isinstance(meta.get("reasoning"), dict) else None
+    if not isinstance(obs, dict):
+        return None
+    try:
+        when = datetime.fromisoformat(str(obs.get("verified_at")))
+    except ValueError:
+        return None
+    age = datetime.now(timezone.utc) - when
+    if age.days >= REASONING_OBSERVATION_TTL_DAYS:
+        return None
+    # An observation describes one endpoint serving one model id; after either
+    # changes it no longer applies.
+    if obs.get("model_id") not in (None, getattr(model, "model_id", None)):
+        return None
+    return obs
+
+
+def reasoning_observation_for_endpoint(model, base_url: str | None) -> dict[str, Any] | None:
+    obs = reasoning_observation(model)
+    if obs is None or obs.get("base_url") not in (None, base_url):
+        return None
+    return obs
+
+
+def record_reasoning_observation(model, observation: dict[str, Any]) -> None:
+    meta = load_metadata(getattr(model, "metadata_json", None))
+    meta.setdefault("reasoning", {})["observed"] = {
+        **observation, "verified_at": datetime.now(timezone.utc).isoformat(),
+    }
+    model.metadata_json = dump_metadata(meta)
+
+
+def endpoint_reasoning_levels(
+    model, base_url: str | None = None
+) -> tuple[tuple[str, ...] | None, str]:
+    """(levels, source) from this deployment's own evidence.
+
+    `levels` is None when the deployment has no evidence of its own; the
+    caller then decides whether a generic source may apply. A verification
+    recorded against another base URL or model id is ignored.
+    """
+    override = reasoning_override(model)
+    if override is not None:
+        return tuple(override["levels"]), "administrator_override"
+    obs = reasoning_observation_for_endpoint(model, base_url)
+    if obs is not None and isinstance(obs.get("levels"), list):
+        return tuple(obs["levels"]), "verified"
+    return None, "unknown"
+
+
 def _per_token(per_million: Any) -> float | None:
     if per_million is None:
         return None

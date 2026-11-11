@@ -469,3 +469,63 @@ async def test_handshake_rejection_is_terminal():
     ws = FakeWS(incoming=[json.dumps({"type": "hello_error", "code": "unauthorized", "message": "nope"})])
     with pytest.raises(_TerminalClose):
         await conn._handshake(ws)
+
+
+# ── reasoning controls ─────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "show,expected",
+    [
+        ({"capabilities": ["completion", "thinking"],
+          "thinking": {"values": ["low", "medium", "high"]}},
+         {"thinking_values": ["low", "medium", "high"]}),
+        ({"capabilities": ["completion", "thinking"]}, {"thinking": True}),
+        ({"capabilities": ["completion"]}, {"thinking": False}),
+        (None, {}),
+    ],
+)
+async def test_ollama_reports_thinking_metadata(show, expected):
+    adapter = OllamaAdapter()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": [{"name": "m"}]})
+        if show is None:
+            return httpx.Response(404)
+        return httpx.Response(200, json=show)
+
+    _patch_client(adapter, handler)
+    meta = (await adapter.list_models())[0].metadata
+    for key in ("thinking", "thinking_values"):
+        assert meta.get(key) == expected.get(key)
+
+
+@pytest.mark.parametrize("think", [True, False, "high"])
+def test_ollama_chat_body_forwards_think(think):
+    from geekcubo_connector.adapters.ollama import _chat_body
+
+    body = _chat_body("m", [{"role": "user", "content": "hi"}], {"think": think})
+    assert body["think"] == think
+
+
+def test_ollama_chat_body_omits_think_by_default():
+    from geekcubo_connector.adapters.ollama import _chat_body
+
+    assert "think" not in _chat_body("m", [{"role": "user", "content": "hi"}], {})
+
+
+def test_openai_compat_body_forwards_reasoning_effort_only_when_set():
+    from geekcubo_connector.adapters.openai_compat import _completion_body
+
+    msgs = [{"role": "user", "content": "hi"}]
+    assert _completion_body("m", msgs, {"reasoning_effort": "low"})["reasoning_effort"] == "low"
+    assert "reasoning_effort" not in _completion_body("m", msgs, {})
+
+
+def test_local_provider_forwards_translated_reasoning_params():
+    from packages.litellm_adapter.local_provider import _completion_params
+
+    assert _completion_params({"think": "high", "reasoning_effort": None}) == {"think": "high"}
+    assert _completion_params({"reasoning_effort": "medium"}) == {"reasoning_effort": "medium"}
+    assert "think" not in _completion_params({})

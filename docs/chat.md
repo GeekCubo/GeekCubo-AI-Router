@@ -10,6 +10,13 @@ caching and cost tracking behave identically. The model menu offers **Auto
 (router picks)**, your routing profiles and every deployable model; the choice
 is saved per conversation.
 
+The **Reasoning** selector next to the model picker sets the reasoning effort.
+**Default** sends nothing. The levels listed are the selected model's
+confirmed ones, *Support not confirmed* for an Unknown model, or what Auto's
+pool can satisfy. The choice is saved per conversation and reused by
+Regenerate, and each reply shows the level actually used. See
+[Reasoning effort](reasoning.md#native-chat).
+
 Replies stream as they are generated. **Stop** (the Send button while a reply
 is streaming) ends the request upstream; the partial answer is kept and marked
 as interrupted, and the request log records it as a client disconnect.

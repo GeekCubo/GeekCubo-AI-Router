@@ -110,6 +110,18 @@ DEFAULT_POLICY: dict[str, Any] = {
         # auto-eligible machine.
         "machines": [],
     },
+    "reasoning": {
+        # Strict by default: a requested effort is a hard requirement, so Auto
+        # either finds a model that supports it or returns a compatibility
+        # error. Turning this on lets Auto use the highest supported level
+        # BELOW the request when nothing supports the requested one. It never
+        # upgrades a request, and never drops below `min_effort`.
+        "allow_downgrade": False,
+        # Floor for a downgrade. `low` keeps a strong request from collapsing
+        # into "barely thinks"; `none` would allow it, which is why it is not
+        # the default.
+        "min_effort": "low",
+    },
 }
 
 _INT_FIELDS = {
@@ -262,6 +274,22 @@ def normalize_policy(raw: dict[str, Any] | None) -> dict[str, Any]:
             out["pricing"]["allow_reference_estimates"] = bool(
                 pricing["allow_reference_estimates"]
             )
+
+    reasoning = raw.get("reasoning")
+    if reasoning is not None:
+        if not isinstance(reasoning, dict):
+            raise PolicyError("reasoning must be an object")
+        if "allow_downgrade" in reasoning:
+            out["reasoning"]["allow_downgrade"] = bool(reasoning["allow_downgrade"])
+        if "min_effort" in reasoning:
+            from app.reasoning import LEVELS
+
+            value = str(reasoning["min_effort"] or "").strip().lower()
+            if value not in LEVELS:
+                raise PolicyError(
+                    "reasoning.min_effort must be one of: " + ", ".join(LEVELS)
+                )
+            out["reasoning"]["min_effort"] = value
     return out
 
 
@@ -270,6 +298,20 @@ def allows_reference_estimates(policy: dict[str, Any] | None) -> bool:
     if not isinstance(policy, dict):
         return False
     return bool((policy.get("pricing") or {}).get("allow_reference_estimates", False))
+
+
+def reasoning_policy(policy: dict[str, Any] | None) -> dict[str, Any]:
+    """The effort-fallback policy, with defaults for an unset/partial block."""
+    defaults = DEFAULT_POLICY["reasoning"]
+    if not isinstance(policy, dict):
+        return dict(defaults)
+    raw = policy.get("reasoning")
+    if not isinstance(raw, dict):
+        return dict(defaults)
+    return {
+        "allow_downgrade": bool(raw.get("allow_downgrade", defaults["allow_downgrade"])),
+        "min_effort": raw.get("min_effort") or defaults["min_effort"],
+    }
 
 
 def _as_int(value: Any, name: str, lo: int, hi: int) -> int:

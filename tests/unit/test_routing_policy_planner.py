@@ -495,3 +495,117 @@ def test_pool_membership_filters_deleted_models():
     policy = default_policy()
     policy["pools"]["mundane"] = ["gone", "here"]
     assert pool_membership(policy, known_ids={"here"})["mundane"] == {"here"}
+
+
+# ── reasoning effort ─────────────────────────────────────────────────────
+
+
+def rmodel(mid, levels, **kw):
+    from dataclasses import replace
+
+    return replace(model(mid, **kw), reasoning_levels=levels)
+
+
+def rplan(catalog, effort, *, policy=None, strategy="cheapest"):
+    return plan_auto(
+        body={"messages": [{"role": "user", "content": "hi"}]},
+        needs={"tools"},
+        deployable={m.id for m in catalog},
+        catalog=catalog,
+        strategy=strategy,
+        preferred_models=[],
+        allowlist=None,
+        quality_scores=None,
+        tps_scores=None,
+        ttft_scores=None,
+        policy=policy or default_policy(),
+        evidence={},
+        hints={},
+        reasoning_effort=effort,
+    )
+
+
+def _downgrade_policy(min_effort="low"):
+    return normalize_policy(
+        {"reasoning": {"allow_downgrade": True, "min_effort": min_effort}}
+    )
+
+
+def test_no_effort_keeps_mixed_pool_unchanged():
+    cat = [
+        rmodel("plain", (), inc=1e-7, out=1e-7),
+        rmodel("thinker", ("low", "medium", "high"), inc=1e-5, out=1e-5),
+        rmodel("unknown", None, inc=1e-6, out=1e-6),
+    ]
+    baseline = plan(cat, strategy="cheapest").candidates
+    p = rplan(cat, None)
+    assert p.candidates == baseline == ["plain", "unknown", "thinker"]
+    assert p.reasoning_effective is None and not p.reasoning_downgraded
+
+
+def test_effort_excludes_only_confirmed_incompatible_models():
+    cat = [
+        rmodel("plain", (), inc=1e-7, out=1e-7),
+        rmodel("thinker", ("low", "medium", "high"), inc=1e-5, out=1e-5),
+        rmodel("unknown", None, inc=1e-6, out=1e-6),
+    ]
+    p = rplan(cat, "high")
+    assert "plain" not in p.candidates
+    assert set(p.candidates) == {"thinker", "unknown"}
+    assert p.reasoning_effective == "high"
+
+
+def test_unknown_only_pool_is_attempted_with_effort_preserved():
+    cat = [rmodel("plain", ()), rmodel("unknown", None)]
+    p = rplan(cat, "xhigh", policy=_downgrade_policy())
+    assert p.candidates == ["unknown"]
+    assert p.reasoning_effective == "xhigh" and not p.reasoning_downgraded
+
+
+def test_strict_policy_rejects_unsatisfiable_effort():
+    cat = [rmodel("plain", ()), rmodel("thinker", ("low", "medium", "high"))]
+    with pytest.raises(AutoRoutingError) as exc:
+        rplan(cat, "xhigh")
+    assert exc.value.category == "reasoning_mismatch"
+
+
+def test_downgrade_picks_highest_supported_level_below_request():
+    cat = [
+        rmodel("mid", ("low", "medium"), inc=1e-7, out=1e-7),
+        rmodel("hi", ("low", "medium", "high"), inc=1e-5, out=1e-5),
+    ]
+    p = rplan(cat, "xhigh", policy=_downgrade_policy())
+    assert p.reasoning_requested == "xhigh"
+    assert p.reasoning_effective == "high"
+    assert p.reasoning_downgraded
+    assert p.candidates == ["hi"]
+
+
+def test_downgrade_never_goes_below_min_effort_or_upgrades():
+    cat = [rmodel("lowonly", ("low",))]
+    with pytest.raises(AutoRoutingError):
+        rplan(cat, "high", policy=_downgrade_policy(min_effort="medium"))
+    with pytest.raises(AutoRoutingError):
+        rplan([rmodel("highonly", ("high",))], "low", policy=_downgrade_policy())
+
+
+def test_downgrade_never_lands_on_none_or_minimal():
+    cat = [rmodel("off", ("none", "minimal"))]
+    with pytest.raises(AutoRoutingError):
+        rplan(cat, "low", policy=_downgrade_policy(min_effort="none"))
+
+
+def test_reasoning_filter_respects_other_capabilities():
+    cat = [
+        rmodel("notools", ("high",), tools=False),
+        rmodel("plain", ()),
+    ]
+    with pytest.raises(AutoRoutingError):
+        rplan(cat, "high")
+
+
+def test_invalid_reasoning_policy_rejected():
+    with pytest.raises(PolicyError):
+        normalize_policy({"reasoning": {"min_effort": "turbo"}})
+    with pytest.raises(PolicyError):
+        normalize_policy({"reasoning": "yes"})

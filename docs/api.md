@@ -6,7 +6,7 @@ Every HTTP surface GeekCubo exposes, which credential each one accepts, the buil
 
 ## Endpoints
 
-- `POST /v1/chat/completions` — proxy + streaming + `model="auto"` + cross-provider prompt cache
+- `POST /v1/chat/completions` — proxy + streaming + `model="auto"` + cross-provider prompt cache; accepts `reasoning_effort` (`none`…`max`, translated per provider, 422 on invalid values, 400 `unsupported_reasoning_effort` when the model cannot honour it; see [Reasoning effort](reasoning.md))
 - `POST /v1/messages` — **Anthropic Messages API ingress** (Claude Code / Anthropic SDKs connect directly; `+ /count_tokens`)
 - `POST /v1beta/models/{model}:generateContent` — **Gemini API ingress** (google-genai SDK connects directly; `+ :streamGenerateContent`, `GET /v1beta/models`)
 - `GET  /v1/models` — `auto`, routing profiles and the model catalog (built-in from `litellm.model_cost`, plus custom and local models)
@@ -46,7 +46,9 @@ x-geek-cache: HIT          ← served from cache, no upstream call
 
 ## Savings widget
 
-`GET /v1/analytics/savings?baseline=gpt-4o&days=7` reports what your traffic would have cost on the baseline model versus what it actually cost, using the baseline's list price. Requests with an unknown price are not counted as savings. The dashboard shows it as a tile.
+`GET /v1/analytics/savings?baseline=gpt-4o&days=7` reports what your traffic would have cost on the baseline model versus what it actually cost, using the baseline's list price. Requests with an unknown price are not counted as savings. It is a hypothetical comparison against a fixed reference model, not a discount, so the Overview page no longer shows it as a headline card; it appears only as a labelled estimate in Analytics.
+
+The Overview **Estimated spend (7D)** card is the sum of recorded request costs. These come from LiteLLM's response cost when available, otherwise from recorded tokens × the configured or catalog price. It is an estimate, not your provider's invoice. **Requests (7D)** counts every recorded request in the same window.
 
 ## Model catalog
 

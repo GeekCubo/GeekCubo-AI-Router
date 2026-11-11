@@ -347,3 +347,117 @@ async def test_chat_completion_logs_active_strategy(chat_client):
     assert log.routing_strategy == "cheapest"
 
 
+
+
+# ── reasoning effort ─────────────────────────────────────────────────────
+
+
+def _deploy(fake, *names):
+    from packages.litellm_adapter.types import ProviderDeployment
+
+    fake._deployments = [
+        ProviderDeployment(model_name=n, litellm_model=f"openai/{n}",
+                           api_key="sk-test", provider="openai")
+        for n in names
+    ]
+
+
+async def test_reasoning_effort_reaches_upstream_for_pinned_model(chat_client):
+    client, fake = chat_client
+    _deploy(fake, "o3")
+    r = await client.post("/v1/chat/completions", json={
+        "model": "o3", "reasoning_effort": "high",
+        "messages": [{"role": "user", "content": "hi"}],
+    })
+    assert r.status_code == 200, r.text
+    kwargs = fake.acompletion.await_args.kwargs
+    assert kwargs["model_params"] == {"o3": {"reasoning_effort": "high"}}
+    assert "reasoning_effort" not in kwargs
+    assert r.headers["x-geek-reasoning-requested"] == "high"
+    assert r.headers["x-geek-reasoning-effective"] == "high"
+    assert "x-geek-reasoning-downgraded" not in r.headers
+
+
+async def test_reasoning_effort_on_unsupported_model_is_400_and_logged(chat_client):
+    client, fake = chat_client
+    _deploy(fake, "gpt-4o")
+    r = await client.post("/v1/chat/completions", json={
+        "model": "gpt-4o", "reasoning_effort": "high",
+        "messages": [{"role": "user", "content": "hi"}],
+    })
+    assert r.status_code == 400, r.text
+    assert r.headers.get("x-geek-error-type") == "unsupported_reasoning_effort"
+    fake.acompletion.assert_not_awaited()
+
+    from sqlalchemy import select
+
+    from packages.db import session as session_mod
+    from packages.db.models.request_log import RequestLog
+
+    async with session_mod._session_factory() as s:
+        rows = (await s.execute(select(RequestLog))).scalars().all()
+    assert len(rows) == 1 and rows[0].status_code == 400
+
+
+@pytest.mark.parametrize("bad", ["turbo", 3, "max!"])
+async def test_invalid_reasoning_effort_is_422(chat_client, bad):
+    client, fake = chat_client
+    r = await client.post("/v1/chat/completions", json={
+        "model": "o3", "reasoning_effort": bad,
+        "messages": [{"role": "user", "content": "hi"}],
+    })
+    assert r.status_code == 422, r.text
+    fake.acompletion.assert_not_awaited()
+
+
+@pytest.mark.parametrize("extra", [{}, {"reasoning_effort": None}, {"reasoning_effort": ""}])
+async def test_omitted_reasoning_effort_is_unchanged(chat_client, extra):
+    client, fake = chat_client
+    _deploy(fake, "o3")
+    r = await client.post("/v1/chat/completions", json={
+        "model": "o3", "messages": [{"role": "user", "content": "hi"}], **extra,
+    })
+    assert r.status_code == 200, r.text
+    kwargs = fake.acompletion.await_args.kwargs
+    assert "model_params" not in kwargs and "reasoning_effort" not in kwargs
+    assert not any(h.startswith("x-geek-reasoning") for h in r.headers)
+
+
+def test_prompt_cache_key_separates_reasoning_levels():
+    from app import prompt_cache
+
+    def key(**kw):
+        return prompt_cache.cache_key(
+            model="o3", messages=[{"role": "user", "content": "hi"}],
+            temperature=0, tools=None, response_format=None, seed=1, **kw,
+        )
+
+    keys = {
+        key(),
+        key(reasoning_effort="low", reasoning_effective="low"),
+        key(reasoning_effort="high", reasoning_effective="high"),
+        key(reasoning_effort="high", reasoning_effective="medium"),
+    }
+    assert len(keys) == 4
+
+
+def test_prompt_cache_key_without_reasoning_matches_pre_reasoning_hash():
+    import hashlib
+    import json
+
+    from app import prompt_cache
+
+    legacy = {
+        "v": 2, "model": "m", "messages": [], "temperature": 0, "tools": None,
+        "response_format": None, "seed": 1, "max_tokens": None,
+        "max_completion_tokens": None, "stop": None, "tool_choice": None,
+        "top_p": None, "n": None, "presence_penalty": None,
+        "frequency_penalty": None, "logit_bias": None,
+    }
+    expected = hashlib.sha256(
+        json.dumps(legacy, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    assert prompt_cache.cache_key(
+        model="m", messages=[], temperature=0, tools=None,
+        response_format=None, seed=1,
+    ) == expected

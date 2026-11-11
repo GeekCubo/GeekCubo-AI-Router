@@ -151,7 +151,16 @@ def _per_million(value: float | None) -> float | None:
     return None if value is None else float(value) * 1_000_000
 
 
-def _model_out(m: CustomProviderModel) -> dict:
+def _reasoning_out(m: CustomProviderModel, base_url: str | None = None) -> dict:
+    levels, source = model_metadata.endpoint_reasoning_levels(m, base_url)
+    return {
+        "reasoning_levels": list(levels) if levels is not None else None,
+        "reasoning_source": source,
+        "reasoning_observation": model_metadata.reasoning_observation_for_endpoint(m, base_url),
+    }
+
+
+def _model_out(m: CustomProviderModel, base_url: str | None = None) -> dict:
     meta = model_metadata.load_metadata(getattr(m, "metadata_json", None))
     identity = meta.get("identity") if isinstance(meta.get("identity"), dict) else {}
     reference = meta.get("reference") if isinstance(meta.get("reference"), dict) else {}
@@ -206,6 +215,9 @@ def _model_out(m: CustomProviderModel) -> dict:
             key: (caps.get(key) or {}).get("source")
             for key in ("tools", "vision", "json_mode", "json_schema")
         },
+        # Endpoint-specific reasoning evidence: levels (list, [] = none, or
+        # null = Unknown), where it came from, and the last verification.
+        **_reasoning_out(m, base_url),
         "metadata": meta,
     }
 
@@ -221,7 +233,7 @@ def _provider_out(p: CustomProvider, models: list[CustomProviderModel]) -> dict:
         "eligible_for_auto": bool(p.eligible_for_auto),
         "decryptable": credential_is_decryptable(p.encrypted_key),
         "last_models_fetched_at": iso_utc(p.last_models_fetched_at),
-        "models": [_model_out(m) for m in models],
+        "models": [_model_out(m, p.base_url) for m in models],
     }
 
 
@@ -601,6 +613,11 @@ class ModelMetadataIn(BaseModel):
     clear_reference_price: bool = False
     context_length: int | None = None
     clear_context: bool = False
+    # Administrator reasoning-effort override for THIS deployment: a list of
+    # levels it honours (empty = no effort control). Takes precedence over
+    # verification results. `clear_reasoning` returns it to evidence/Unknown.
+    reasoning_levels: list[str] | None = None
+    clear_reasoning: bool = False
 
 
 class BulkModelIn(BaseModel):
@@ -654,6 +671,13 @@ async def update_model_metadata(
     elif body.catalog_key:
         model_metadata.set_alias(m, body.catalog_key)
         alias_changed = True
+    if body.clear_reasoning:
+        model_metadata.set_reasoning_override(m, None)
+    elif body.reasoning_levels is not None:
+        try:
+            model_metadata.set_reasoning_override(m, body.reasoning_levels)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
     for capability, state in (body.capabilities or {}).items():
         try:
             if state == "catalog":
@@ -723,7 +747,7 @@ async def update_model_metadata(
     await db.commit()
     custom_providers.invalidate_fetch_cache(provider.id)
     await _invalidate()
-    return _model_out(m)
+    return _model_out(m, provider.base_url)
 
 
 @router.post("/{provider_id}/models/bulk")
@@ -941,6 +965,50 @@ async def test_saved_connection(
         model=None,
         allowed_local_hosts=get_settings().custom_provider_allowed_local_hosts,
     )
+
+
+# One verification per model per window: each probe is a few paid calls.
+_PROBE_COOLDOWN_S = 60.0
+_last_probe: dict[str, float] = {}
+
+
+@router.post("/{provider_id}/models/{model_row_id}/verify-reasoning")
+async def verify_model_reasoning(
+    provider_id: str,
+    model_row_id: str,
+    _kc = Depends(get_admin_context),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Administrator-triggered reasoning-effort check for one deployment.
+
+    Never runs automatically. Costs at most four tiny completions on the
+    operator's own key. Only a conclusive result is stored (with a 30-day
+    expiry); an administrator override always takes precedence over it.
+    """
+    import time
+
+    row = await _get_provider(db, provider_id)
+    m = await _get_model_row(db, provider_id, model_row_id)
+    now = time.monotonic()
+    if now - _last_probe.get(m.id, -1e9) < _PROBE_COOLDOWN_S:
+        raise HTTPException(status_code=429, detail="This model was verified moments ago; try again shortly.")
+    _last_probe[m.id] = now
+    try:
+        api_key = decrypt_credential(row.encrypted_key)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="stored key cannot be decrypted; re-save the API key") from exc
+    result = await custom_providers.probe_reasoning(
+        base_url=row.base_url, api_key=api_key, model=m.model_id,
+        allowed_local_hosts=get_settings().custom_provider_allowed_local_hosts,
+    )
+    if result.get("conclusive"):
+        model_metadata.record_reasoning_observation(m, {
+            "levels": result["levels"], "basis": result.get("basis"),
+            "base_url": row.base_url, "model_id": m.model_id,
+        })
+        await db.commit()
+        await _invalidate()
+    return {**result, "model": _model_out(m, row.base_url)}
 
 
 async def _invalidate() -> None:

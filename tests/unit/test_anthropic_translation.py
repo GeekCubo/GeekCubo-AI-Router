@@ -233,7 +233,7 @@ def test_sampling_and_metadata_mapping():
     assert "top_k" not in out  # dropped, documented
 
 
-def test_thinking_param_and_history_blocks_dropped_not_rejected():
+def test_thinking_param_becomes_reasoning_effort_and_blocks_kept_aside():
     out = to_openai_request(_req(
         thinking={"type": "enabled", "budget_tokens": 1024},
         messages=[
@@ -244,8 +244,15 @@ def test_thinking_param_and_history_blocks_dropped_not_rejected():
             {"role": "user", "content": "ok"},
         ],
     ))
+    # The setting reaches the engine in its normalized form. The signed block
+    # is kept aside (never as text) for an Anthropic tool loop; the client
+    # strips it for any other target (test_litellm_client).
     assert "thinking" not in out
-    assert out["messages"][0] == {"role": "assistant", "content": "answer"}
+    assert out["reasoning_effort"] == "low"
+    assert out["messages"][0] == {
+        "role": "assistant", "content": "answer",
+        "thinking_blocks": [{"type": "thinking", "thinking": "...", "signature": "s"}],
+    }
 
 
 def test_stop_sequences_truncated_to_openai_cap():
@@ -267,7 +274,47 @@ def test_thinking_only_assistant_message_keeps_empty_content():
         ]},
         {"role": "user", "content": "and?"},
     ]))
-    assert out["messages"][1] == {"role": "assistant", "content": ""}
+    assert out["messages"][1]["content"] == ""
+    assert out["messages"][1]["thinking_blocks"] == [
+        {"type": "thinking", "thinking": "...", "signature": "s"},
+        {"type": "redacted_thinking", "data": "x"},
+    ]
+
+
+def test_unsigned_thinking_block_is_not_carried():
+    out = to_openai_request(_req(messages=[
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": [
+            {"type": "thinking", "thinking": "no signature"},
+            {"type": "text", "text": "a"},
+        ]},
+        {"role": "user", "content": "and?"},
+    ]))
+    assert out["messages"][1] == {"role": "assistant", "content": "a"}
+
+
+def test_response_returns_signed_thinking_before_text_and_tool_use():
+    out = to_anthropic_response({
+        "id": "x", "model": "m",
+        "choices": [{"finish_reason": "tool_calls", "message": {
+            "content": "",
+            "reasoning_content": "plan",
+            "thinking_blocks": [
+                {"type": "thinking", "thinking": "plan", "signature": "SIG"},
+                {"type": "redacted_thinking", "data": "RED"},
+                {"type": "thinking", "thinking": "unsigned"},
+            ],
+            "tool_calls": [{"id": "toolu_1", "function": {"name": "f", "arguments": "{}"}}],
+        }}],
+    })
+    assert [b["type"] for b in out["content"]] == ["thinking", "redacted_thinking", "tool_use"]
+    assert out["content"][0] == {"type": "thinking", "thinking": "plan", "signature": "SIG"}
+
+
+def test_response_without_thinking_is_unchanged():
+    out = to_anthropic_response({"id": "x", "model": "m", "choices": [
+        {"finish_reason": "stop", "message": {"content": "hi"}}]})
+    assert out["content"] == [{"type": "text", "text": "hi"}]
 
 
 def test_document_block_rejected_with_400():
@@ -502,3 +549,38 @@ def test_empty_assistant_content_is_still_preserved():
         {"role": "assistant", "content": ""},
     ]))
     assert out["messages"][-1] == {"role": "assistant", "content": ""}
+
+
+# ── thinking → normalized reasoning_effort ──
+
+
+@pytest.mark.parametrize(
+    "overrides,expected",
+    [
+        ({"thinking": {"type": "adaptive"}, "output_config": {"effort": "high"}}, "high"),
+        ({"thinking": {"type": "adaptive"}}, None),
+        ({"output_config": {"effort": "max"}}, "max"),
+        ({"thinking": {"type": "disabled"}}, "none"),
+        ({"thinking": {"type": "enabled", "budget_tokens": 4096}}, "high"),
+        ({"thinking": {"type": "enabled", "budget_tokens": 16000}}, "max"),
+        ({}, None),
+    ],
+)
+def test_thinking_controls_map_to_reasoning_effort(overrides, expected):
+    out = to_openai_request(_req(max_tokens=32000, **overrides))
+    assert out.get("reasoning_effort") == expected
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"thinking": {"type": "turbo"}},
+        {"thinking": {"type": "enabled"}},
+        {"thinking": {"type": "enabled", "budget_tokens": 0}},
+        {"output_config": {"effort": "extreme"}},
+    ],
+)
+def test_unrecognised_thinking_is_rejected_not_dropped(overrides):
+    with pytest.raises(HTTPException) as exc:
+        to_openai_request(_req(**overrides))
+    assert exc.value.status_code == 400

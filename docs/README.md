@@ -6,6 +6,7 @@
 |---|---|
 | [Security, administrator account and API keys](security.md) | First-time setup, sign-in and sessions (including *Remember me*), password recovery, API keys, which key goes where, encryption at rest, backups, troubleshooting |
 | [Routing](routing.md) | `model="auto"`, eligibility filters, strategies, routing policies, profiles, inference fallback |
+| [Reasoning effort](reasoning.md) | `reasoning_effort` levels, per-provider translation, Supported/Unsupported/Unknown, Auto downgrade policy, Chat selector |
 | [Model Intelligence](model-intelligence.md) | Catalog metadata sources, matching, confirmed vs reference prices, capabilities |
 | [Connecting tools and SDKs](integrations.md) | Connect a tool, OpenCode, Claude Code, Cursor, native Anthropic and Gemini endpoints, streaming |
 | [Local AI Connect](local-ai-connect.md) | Bringing Ollama, LM Studio, vLLM, llama.cpp and other local servers into routing |

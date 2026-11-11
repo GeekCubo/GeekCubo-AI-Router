@@ -80,3 +80,10 @@ class ProviderDeployment:
     # up from the model name the upstream echoes back (an aggregator that
     # answers `"model": "gpt-4o"` must not be billed at OpenAI's list rate).
     operator_priced: bool = False
+    # Local AI Connect only: the connector adapter (ollama, lmstudio, ...)
+    # serving the model. Reasoning controls differ per runtime (Ollama's
+    # `think` vs an OpenAI-compatible `reasoning_effort`).
+    local_adapter: str | None = None
+    # Local AI Connect only: the `think` values the runtime reported for the
+    # model (see app.reasoning.local_thinking_from_metadata); None = unknown.
+    local_thinking: tuple[str, ...] | None = None

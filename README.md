@@ -238,6 +238,8 @@ Send `model="auto"` (or a routing-profile id) and GeekCubo:
 
 The chosen model is returned in `x-geek-resolved-model`. If nothing qualifies, the request fails with a 422 that names the filter that emptied the pool instead of guessing. **Routing profiles** are named Auto configurations (strategy, allowlist, price ceiling, fallback limit) that clients select by model id; a fallback can never escape its profile. **Test a routing decision** on the Routing page shows the reasoning without calling any model. Full details: [Routing](docs/routing.md).
 
+**Reasoning effort.** Send `reasoning_effort` (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; omit it for the model default) and GeekCubo translates it for the selected provider (OpenAI-style `reasoning_effort`, Claude thinking, Gemini thinking, Ollama `think`). Auto removes only models confirmed unable to honour it. An unsatisfiable level is a client error unless the routing policy allows a visible downgrade, and it is never silently dropped. See [Reasoning effort](docs/reasoning.md).
+
 ## Chat and attachments
 
 <p align="center">

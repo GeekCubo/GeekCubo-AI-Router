@@ -99,6 +99,8 @@ def build_deployments(
                     output_cost_per_token=0.0,
                     deployment_id=local.deployment_id,
                     operator_priced=True,
+                    local_adapter=getattr(local, "adapter", None),
+                    local_thinking=getattr(local, "thinking", None),
                 )
             )
 

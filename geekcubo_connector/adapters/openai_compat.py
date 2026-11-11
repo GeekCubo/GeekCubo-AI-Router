@@ -117,6 +117,9 @@ def _completion_body(model_key: str, messages: list[dict], params: dict) -> dict
         "presence_penalty",
         "frequency_penalty",
         "parallel_tool_calls",
+        # LM Studio and other OpenAI-compatible runtimes take this for the
+        # reasoning models they recognise; the server rejects it otherwise.
+        "reasoning_effort",
     ):
         if params.get(key) is not None:
             body[key] = params[key]

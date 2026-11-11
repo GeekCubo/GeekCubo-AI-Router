@@ -426,8 +426,44 @@ def _apply_generation_config(gc: dict, out: dict) -> None:
             logger.warning("gemini_response_schema_dropped")
     if _alias(gc, "topK", "top_k") is not None:
         logger.info("gemini_top_k_dropped")
-    if _alias(gc, "thinkingConfig", "thinking_config") is not None:
-        logger.warning("gemini_thinking_config_dropped")
+    effort = _thinking_effort(_alias(gc, "thinkingConfig", "thinking_config"))
+    if effort is not None:
+        out["reasoning_effort"] = effort
+
+
+def _thinking_effort(tc) -> str | None:
+    """Gemini's `thinkingConfig` → the engine's normalized effort.
+
+    * `thinkingLevel` (Gemini 3) — the level as given.
+    * `thinkingBudget` (Gemini 2.5) — `0` is off (`none`), `-1` is dynamic
+      (the model default, i.e. no setting), a positive budget maps to the
+      nearest level. For a Gemini model LiteLLM translates the level back to
+      a budget/level of its own; for other providers it becomes their native
+      control.
+    * `includeThoughts` only asks for thought summaries in the response,
+      which this endpoint does not return; on its own it is no setting.
+
+    An unrecognised value is a 400 rather than being silently dropped.
+    """
+    from app.reasoning import ReasoningError, effort_from_budget, normalize_effort
+
+    if tc is None:
+        return None
+    if not isinstance(tc, dict):
+        raise _invalid("thinkingConfig must be an object")
+    level = _alias(tc, "thinkingLevel", "thinking_level")
+    if level is not None:
+        try:
+            return normalize_effort(level)
+        except ReasoningError as exc:
+            raise _invalid(f"thinkingConfig.thinkingLevel: {exc.message}") from exc
+    budget = _alias(tc, "thinkingBudget", "thinking_budget")
+    if budget is None or budget == -1:
+        return None
+    effort = effort_from_budget(budget)
+    if effort is None:
+        raise _invalid("thinkingConfig.thinkingBudget must be -1, 0 or a positive integer")
+    return effort
 
 
 def to_openai_request(req: GeminiGenerateRequest, *, model: str, stream: bool) -> dict:
@@ -559,6 +595,11 @@ _STREAM_ERROR_TYPE_TO_CODE = {
     "no_capable_provider": 403,
     "upstream_timeout": 503,
     "upstream_error": 503,
+    # The selected model cannot take the requested thinking setting: an
+    # INVALID_ARGUMENT the client must change, never a retryable 503.
+    "unsupported_reasoning_effort": 400,
+    "invalid_reasoning_effort": 400,
+    "unsupported_parameter": 400,
 }
 
 

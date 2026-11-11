@@ -84,6 +84,15 @@ OpenCode 1.x used a different, now deprecated schema (`provider` / `npm` /
 tool → OpenCode → Format** generates either one with your real base URL; do
 not merge the two shapes in one file.
 
+OpenCode model variants that set `reasoningEffort` arrive as the standard
+`reasoning_effort` field, which GeekCubo translates for the routed model (see
+[Reasoning effort](reasoning.md)). Verified with OpenCode 2.2.7 against a
+local GeekCubo and a recording mock upstream: `geek/o3#high` and `#medium`
+reached the upstream as `reasoning_effort: "high"` / `"medium"`, a plain
+`geek/o3` sent no reasoning field, and `geek/auto#high` kept `high` on the
+routed model. OpenCode also sends its own short title request with
+`reasoning_effort: "low"` when a variant is selected.
+
 Both formats were verified with OpenCode 2.2.6 for text generation (streamed
 chat completions). Agentic tool calling additionally depends on the model
 GeekCubo routes to; a successful text request does not prove it.
@@ -125,7 +134,9 @@ client.models.generate_content(model="auto", contents="Hello!")
 
 Requests are translated at the edge into the same internal pipeline, so
 `model="auto"`, the cross-provider prompt cache (shared across protocols),
-routing strategies, and the analytics dashboard all work identically. Guides:
+routing strategies, and the analytics dashboard all work identically.
+Anthropic `thinking` / `output_config.effort` and Gemini `thinkingConfig` map
+to the normalized [reasoning effort](reasoning.md#native-anthropic-and-gemini-endpoints). Guides:
 [integrations/claude-code.md](../integrations/claude-code.md),
 [integrations/gemini-sdk.md](../integrations/gemini-sdk.md).
 

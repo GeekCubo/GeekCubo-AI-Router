@@ -180,12 +180,15 @@ async def local_catalog_entries(
 
     pairs = await enabled_local_models(db)
     out = []
+    from app.reasoning import capability, local_thinking_from_metadata
+
     for machine, model in pairs:
         if eligible_only and not (machine.eligible_for_auto and settings.eligible_for_auto):
             continue
+        model_id = local_model_id(machine, model.model_key)
         out.append(
             CatalogModel(
-                id=local_model_id(machine, model.model_key),
+                id=model_id,
                 provider=LOCAL_SLUG,
                 litellm_prefix=LITELLM_PREFIX,
                 supports_tools=bool(model.supports_tools),
@@ -196,6 +199,15 @@ async def local_catalog_entries(
                 output_cost_per_token=0.0,
                 context_length=model.context_length,
                 price_source="local",
+                # The runtime decides: Ollama reports the exact `think`
+                # values per model; LM Studio only takes an effort for models
+                # it knows reason and reports nothing. None stays Unknown.
+                reasoning_levels=capability(
+                    model_id,
+                    provider=LITELLM_PROVIDER,
+                    local_adapter=model.adapter,
+                    local_thinking=local_thinking_from_metadata(model.metadata_json),
+                ).levels,
             )
         )
     return out

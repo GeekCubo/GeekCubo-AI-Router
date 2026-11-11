@@ -43,6 +43,7 @@ What each part of the path supports today:
 | Streaming text | ✓ | ✓ |
 | Image input | ✓ for models Ollama reports as vision-capable (base64 images) | passed through unchanged; depends on the server |
 | Tool calls | ✗ — not returned through the connector | ✗ — not returned through the connector |
+| Reasoning effort | `think`: named levels when the model reports them (gpt-oss low/medium/high), otherwise on/off; a model that reports nothing accepts only `none`/`high` | `reasoning_effort` forwarded; support is Unknown (the server does not report it) and a rejection returns 400 |
 | Reconnect | automatic, exponential backoff capped at 30 s | same |
 
 Capabilities are what the *whole path* can deliver, not only what the model

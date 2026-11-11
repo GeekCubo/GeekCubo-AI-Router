@@ -81,6 +81,11 @@ ignored.
 
 ## Capabilities and Auto
 
+Reasoning-effort levels are a separate capability, derived from LiteLLM's
+model metadata and local runtime reports rather than the metadata sources
+below. They are published as `reasoning_levels` (list, empty list, or `null`
+for Unknown). See [Reasoning effort](reasoning.md#capability-supported-unsupported-unknown).
+
 Metadata is resolved automatically when you **Fetch → Select → Add Selected
 Models**. You don't need to open Details first. Tools, Vision, JSON mode,
 JSON Schema, context window and reference prices are resolved **field by

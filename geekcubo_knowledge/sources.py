@@ -19,6 +19,7 @@ DOC_SOURCES: tuple[tuple[str, str], ...] = (
     ("docs/security.md", "Security and API keys"),
     ("docs/routing.md", "Routing"),
     ("docs/model-intelligence.md", "Model Intelligence"),
+    ("docs/reasoning.md", "Reasoning effort"),
     ("docs/integrations.md", "Connecting tools and SDKs"),
     ("docs/local-ai-connect.md", "Local AI Connect"),
     ("docs/chat.md", "Chat"),

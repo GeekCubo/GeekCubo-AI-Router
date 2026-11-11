@@ -15,6 +15,12 @@ class ChatMessage(BaseModel):
     name: str | None = None
     tool_calls: list[dict] | None = None
     tool_call_id: str | None = None
+    # Signed Anthropic thinking blocks from a previous assistant turn
+    # (LiteLLM's field name). Anthropic requires them back, unchanged, on the
+    # assistant turn that made the tool call the request is answering; they
+    # are forwarded only to an Anthropic model with thinking enabled and
+    # stripped for every other target (see packages.litellm_adapter.client).
+    thinking_blocks: list[dict] | None = None
 
 
 class ChatCompletionRequest(BaseModel):
@@ -54,6 +60,23 @@ class ChatCompletionRequest(BaseModel):
     # chat.py can't see what the client actually asked for, so an
     # explicit `include_usage=false` from the client gets clobbered.
     stream_options: dict | None = None
+    # Normalized reasoning effort. Declared so Pydantic does not drop it —
+    # the previous behaviour was to accept the field and silently discard it
+    # before it reached the provider. `None` means "provider default" and is
+    # never coerced to a level. Validation lives in app.reasoning so the
+    # native protocol adapters share one vocabulary.
+    reasoning_effort: str | None = None
+
+    @field_validator("reasoning_effort")
+    @classmethod
+    def _normalize_reasoning_effort(cls, value: Any) -> Any:
+        from app.reasoning import ReasoningError, normalize_effort
+
+        try:
+            return normalize_effort(value)
+        except ReasoningError as exc:
+            # ValueError is what Pydantic turns into a 422 validation error.
+            raise ValueError(exc.message) from exc
 
     @field_validator("response_format")
     @classmethod

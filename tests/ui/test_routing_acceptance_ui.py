@@ -211,7 +211,7 @@ def test_model_table_filters_by_catalog_status(page, live_server, upstream):
         # Ambiguous: no metadata inherited, picker offered.
         amb = row.locator("tr[data-model-row]").filter(has_text="apixo/shared")
         assert amb.locator("[data-cp-catalog]").count() == 1
-        assert "pick 1 of 2" in amb.inner_text()
+        assert "Pick 1 of 2" in amb.locator(".match-badge").get_attribute("aria-label")
 
         btn = row.locator('.cp-match-filter [data-match-filter="unmatched"]')
         assert btn.get_attribute("aria-pressed") == "false"

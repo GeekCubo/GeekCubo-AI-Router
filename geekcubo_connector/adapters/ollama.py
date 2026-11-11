@@ -41,12 +41,14 @@ class OllamaAdapter(BaseAdapter):
             if not name:
                 continue
             details = item.get("details") or {}
-            capabilities: list = []
+            capabilities: list | None = None
+            show: dict = {}
             try:
                 async with self._client() as client:
                     response = await client.post("/api/show", json={"model": name})
                     response.raise_for_status()
-                    reported = response.json().get("capabilities")
+                    show = response.json() or {}
+                    reported = show.get("capabilities")
                     if isinstance(reported, list):
                         capabilities = reported
             except Exception:
@@ -61,11 +63,12 @@ class OllamaAdapter(BaseAdapter):
                     quantization=details.get("quantization_level"),
                     context_length=_context_length(item),
                     supports_tools=False,
-                    supports_vision="vision" in capabilities,
+                    supports_vision="vision" in (capabilities or []),
                     metadata={
                         "size": item.get("size"),
                         "modified_at": item.get("modified_at"),
                         "digest": item.get("digest"),
+                        **_thinking_metadata(show, capabilities),
                     },
                 )
             )
@@ -114,6 +117,24 @@ class OllamaAdapter(BaseAdapter):
         yield {"done": True, "usage": usage or {}}
 
 
+def _thinking_metadata(show: dict, capabilities: list | None) -> dict:
+    """What Ollama reports about this model's `think` control.
+
+    Newer Ollama returns `thinking.values` — the exact values `think`
+    accepts (booleans for an on/off switch, names such as "low"/"high" for
+    levels). Older versions only list "thinking" among the capabilities.
+    Nothing is reported when neither is available, which the server treats
+    as Unknown rather than Unsupported.
+    """
+    thinking = show.get("thinking") if isinstance(show, dict) else None
+    if isinstance(thinking, dict) and isinstance(thinking.get("values"), list):
+        values = [v for v in thinking["values"] if isinstance(v, (bool, str))]
+        return {"thinking_values": values[:16]}
+    if capabilities is not None:
+        return {"thinking": "thinking" in capabilities}
+    return {}
+
+
 def _chat_body(model_key: str, messages: list[dict], params: dict) -> dict:
     options: dict = {}
     if params.get("temperature") is not None:
@@ -137,6 +158,12 @@ def _chat_body(model_key: str, messages: list[dict], params: dict) -> dict:
         body["tools"] = params["tools"]
     if params.get("response_format", {}).get("type") == "json_object":
         body["format"] = "json"
+    # Ollama's thinking switch: a boolean for most models, a level string
+    # ("low"/"medium"/"high") for gpt-oss. Only sent when the request set it,
+    # so the model's own default is untouched otherwise.
+    think = params.get("think")
+    if isinstance(think, (bool, str)):
+        body["think"] = think
     return body
 
 
