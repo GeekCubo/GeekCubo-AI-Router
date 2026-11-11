@@ -146,6 +146,10 @@ async def routing_models(
         })
     rows.sort(key=lambda r: (not r["custom"], r["availability"] != "auto", r["id"]))
     total = len(rows)
+    auto_pool = [
+        m for m in auto
+        if m.id in deployable and is_priced_for_auto(m, allow_estimates=allow_estimates)
+    ]
     return {
         "total": total,
         "offset": offset,
@@ -153,13 +157,11 @@ async def routing_models(
         "models": rows[offset:offset + limit],
         # Levels Auto can honour: those at least one Auto-eligible model
         # confirms. Unknown models are still tried for any level, but are not
-        # advertised as satisfying one.
-        "auto_reasoning_levels": _auto_reasoning_levels(
-            [
-                m for m in auto
-                if m.id in deployable
-                and is_priced_for_auto(m, allow_estimates=allow_estimates)
-            ]
+        # advertised as satisfying one; `auto_reasoning_unknown` says whether
+        # such models exist, so the UI can offer the other levels unverified.
+        "auto_reasoning_levels": _auto_reasoning_levels(auto_pool),
+        "auto_reasoning_unknown": any(
+            getattr(m, "reasoning_levels", None) is None for m in auto_pool
         ),
     }
 

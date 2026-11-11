@@ -1745,7 +1745,7 @@ function _cpModelsTable(p) {
       <table>
         <thead><tr>
           <th scope="col" class="cp-col-check"><input type="checkbox" data-cp-check-all="${escapeHtml(p.id)}" ${allFilteredSelected ? "checked" : ""} aria-label="Select all filtered models"></th>
-          <th scope="col">Model</th><th scope="col" class="cp-num" title="Context window / maximum output tokens">Context / out</th><th scope="col" class="cp-cap-cell">Tools</th><th scope="col" class="cp-cap-cell">Vision</th><th scope="col" class="cp-cap-cell">JSON mode</th><th scope="col" class="cp-cap-cell">JSON schema</th><th scope="col" class="cp-num" title="Reference price per 1M tokens, input / output">Ref. / 1M<br><span class="muted">in / out</span></th><th scope="col" class="cp-num" title="Custom price per 1M tokens, input / output">Price / 1M<br><span class="muted">in / out</span></th><th scope="col" class="cp-cap-cell cp-col-enabled" title="Whether the model can be used (independent of its capabilities)">Enabled</th><th scope="col"><span class="sr-only">Actions</span></th>
+          <th scope="col" class="cp-col-model">Model</th><th scope="col" class="cp-num cp-col-context" title="Context window / maximum output tokens">Context / out</th><th scope="col" class="cp-cap-cell">Tools</th><th scope="col" class="cp-cap-cell">Vision</th><th scope="col" class="cp-cap-cell">JSON mode</th><th scope="col" class="cp-cap-cell">JSON schema</th><th scope="col" class="cp-num" title="Reference price per 1M tokens, input / output">Ref. / 1M<br><span class="muted">in / out</span></th><th scope="col" class="cp-num" title="Custom price per 1M tokens, input / output">Price / 1M<br><span class="muted">in / out</span></th><th scope="col" class="cp-cap-cell cp-col-enabled" title="Whether the model can be used (independent of its capabilities)">Enabled</th><th scope="col" class="cp-col-actions">Actions</th>
         </tr></thead>
         <tbody>${rows || '<tr><td colspan="11" class="muted small">No models match.</td></tr>'}</tbody>
       </table>
@@ -2591,9 +2591,9 @@ function renderCustomProviders() {
           </div>
         </div>
         <div class="cp-head-actions">
-          <button class="btn btn-ghost btn-sm" data-cp-edit="${escapeHtml(p.id)}">Edit</button>
+          <button class="btn btn-secondary btn-sm" data-cp-edit="${escapeHtml(p.id)}">Edit</button>
           <details class="cp-menu">
-            <summary class="btn btn-ghost btn-sm" aria-label="More actions for ${escapeHtml(p.display_name)}">More</summary>
+            <summary class="btn btn-secondary btn-sm" aria-label="More actions for ${escapeHtml(p.display_name)}">More</summary>
             <div class="cp-menu-items">
               <button type="button" class="cp-menu-item" data-cp-test="${escapeHtml(p.id)}">Test connection</button>
               <button type="button" class="cp-menu-item" data-cp-fetch="${escapeHtml(p.id)}">Fetch available models</button>
@@ -2627,7 +2627,7 @@ function renderCustomProviders() {
       <p class="cp-meta cp-summary sr-only">Base URL: <code>${escapeHtml(p.base_url)}</code> · Key: <code>${escapeHtml(p.key_prefix || "—")}</code> · Models fetched: <strong>${_fmtFetchedAt(p.last_models_fetched_at)}</strong></p>
 
       <div class="cp-actions">
-        <button class="btn btn-ghost btn-sm" data-cp-manage="${escapeHtml(p.id)}" aria-expanded="${manageOpen}">${manageOpen ? "Hide models" : `Manage models (${modelCount})`}</button>
+        <button class="btn btn-secondary btn-sm" data-cp-manage="${escapeHtml(p.id)}" aria-expanded="${manageOpen}">${manageOpen ? "Hide models" : `Manage models (${modelCount})`}</button>
       </div>
       <form class="cp-edit inline-form" data-cp-edit-form="${escapeHtml(p.id)}" hidden novalidate>
         <label class="field flex-grow"><span class="field-label">Provider name</span>
@@ -6365,6 +6365,7 @@ const chState = {
   knowledge: null,      // GET /api/chat/knowledge/status
   reasoning: "default", // Reasoning effort; "default" sends no parameter
   autoReasoning: [],    // Levels at least one Auto-eligible model confirms
+  autoReasoningUnknown: false, // Auto pool has models with unknown support
 };
 
 // Weakest → strongest, matching app/reasoning.py LEVELS.
@@ -6558,7 +6559,8 @@ async function chLoadModels() {
     const data = await api("/api/routing/models?scope=routable&limit=200&offset=0");
     chState.models = data.models || [];
     chState.autoReasoning = data.auto_reasoning_levels || [];
-  } catch { chState.models = []; chState.autoReasoning = []; }
+    chState.autoReasoningUnknown = Boolean(data.auto_reasoning_unknown);
+  } catch { chState.models = []; chState.autoReasoning = []; chState.autoReasoningUnknown = false; }
   const items = [
     { value: "auto", label: t("chat.model_auto") },
     ...chState.models.map((m) => ({ value: m.id, label: m.id })),
@@ -6577,11 +6579,19 @@ async function chLoadModels() {
 // = no effort control), or null when support is unknown. Auto offers the
 // levels its pool can satisfy. Unknown models still get every level, marked
 // as unverified, because the server attempts them with the effort preserved.
+// `levels` are confirmed; `unverified` are offered but not confirmed. Auto
+// with Unknown-capability models in its pool tries any level on them (the
+// server's policy), so those levels stay selectable, labelled unverified.
 function chReasoningLevelsFor(model) {
-  if (!model || model === "auto") return { levels: chState.autoReasoning || [], known: true };
+  if (!model || model === "auto") {
+    const levels = chState.autoReasoning || [];
+    const unverified = chState.autoReasoningUnknown
+      ? CH_REASONING_LEVELS.filter((l) => !levels.includes(l)) : [];
+    return { levels, unverified };
+  }
   const row = (chState.models || []).find((m) => m.id === model);
   const levels = row ? row.reasoning_levels : null;
-  return Array.isArray(levels) ? { levels, known: true } : { levels: CH_REASONING_LEVELS, known: false };
+  return Array.isArray(levels) ? { levels, unverified: [] } : { levels: [], unverified: CH_REASONING_LEVELS };
 }
 
 function chReasoningLabel(level) {
@@ -6596,24 +6606,27 @@ function chRenderReasoning({ reset = false } = {}) {
   const sel = $("#ch-reasoning");
   if (!sel) return;
   const model = chModelSelect()?.value || "auto";
-  const { levels, known } = chReasoningLevelsFor(model);
+  const { levels, unverified } = chReasoningLevelsFor(model);
+  const offered = [...levels, ...unverified];
   const current = chState.reasoning;
-  const stale = current !== "default" && !levels.includes(current);
+  const stale = current !== "default" && !offered.includes(current);
   if (stale && reset && chState.models !== undefined) {
     toast(tf("chat.reasoning_reset", { level: chReasoningLabel(current) }), "info");
     chState.reasoning = "default";
     chSaveReasoning();
   }
   const option = (v) => `<option value="${escapeHtml(v)}">${escapeHtml(tf("chat.reasoning_option", { level: chReasoningLabel(v) }))}</option>`;
-  const shown = stale && chState.reasoning === current ? [...levels, current] : levels;
-  const choices = shown.map(option).join("");
-  sel.innerHTML = option("default") + (known || !choices
-    ? choices
-    : `<optgroup label="${escapeHtml(t("chat.reasoning_unverified"))}">${choices}</optgroup>`);
+  const keep = stale && chState.reasoning === current ? [current] : [];
+  const confirmed = [...levels, ...keep].map(option).join("");
+  const unknown = unverified.map(option).join("");
+  sel.innerHTML = option("default") + confirmed + (unknown
+    ? `<optgroup label="${escapeHtml(t("chat.reasoning_unverified"))}">${unknown}</optgroup>` : "");
   sel.value = chState.reasoning;
-  sel.disabled = !shown.length;
-  sel.title = !levels.length ? t("chat.reasoning_none_available")
-    : known ? t("chat.reasoning_aria") : t("chat.reasoning_unverified_hint");
+  // Default is always selectable, so the control stays usable; with no
+  // adjustable level the title explains why only Default is offered.
+  sel.disabled = false;
+  sel.title = !offered.length ? t("chat.reasoning_none_available")
+    : levels.length ? t("chat.reasoning_aria") : t("chat.reasoning_unverified_hint");
 }
 
 async function chSaveReasoning() {

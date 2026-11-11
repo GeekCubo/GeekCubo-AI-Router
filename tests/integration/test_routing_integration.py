@@ -482,6 +482,8 @@ async def test_routing_models_publishes_reasoning_levels(env):
     # A custom model with no evidence is Unknown (null), never "unsupported".
     assert body["models"][0]["reasoning_levels"] is None
     assert body["auto_reasoning_levels"] == []
+    # ...but Auto still tries any level on it, so the UI must be told.
+    assert body["auto_reasoning_unknown"] is True
 
 
 def test_auto_reasoning_levels_union_in_canonical_order():
