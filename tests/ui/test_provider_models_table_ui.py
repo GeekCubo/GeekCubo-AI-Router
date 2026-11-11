@@ -322,3 +322,47 @@ def test_details_show_reasoning_status_and_override(table):
     page.locator(".cp-popmenu-item", has_text="Details").click()
     page.locator(f"{holder} .cp-detail-reasoning").wait_for(timeout=15_000)
     assert "Override: low, high" in page.locator(f"{holder} .cp-detail-reasoning").inner_text()
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_desktop_columns_are_balanced_with_actions_header(table, theme):
+    """The model column no longer takes every spare pixel: data columns get
+    room for one-line headers, an Actions header sits above every Actions
+    button, and provider-level buttons use the bordered secondary style."""
+    page, row, holder, *_ = table
+    page.evaluate(f"() => applyTheme('{theme}')")
+    heads = page.locator(f"{holder} thead th")
+    texts = [h.inner_text().strip() for h in heads.all()]
+    assert texts[-1].lower() == "actions"
+    widths = page.evaluate(f"""() => {{
+      const ths = [...document.querySelectorAll('{holder} thead th')];
+      const tbl = document.querySelector('{holder} table').getBoundingClientRect().width;
+      return {{ tbl, model: ths[1].getBoundingClientRect().width,
+        scroll: document.querySelector('{holder} .table-wrap').scrollWidth - document.querySelector('{holder} .table-wrap').clientWidth,
+        tall: ths.slice(2).filter((th) => th.innerText.split("\\n").length > 2).map((th) => th.innerText) }};
+    }}""")
+    assert widths["model"] < widths["tbl"] * 0.35, widths
+    # At desktop width the whole table fits its card; headers wrap at most
+    # to two lines.
+    assert widths["scroll"] <= 1, widths
+    assert widths["tall"] == [], widths
+    # Every Actions button sits inside the Actions header's horizontal span.
+    head = heads.last.bounding_box()
+    for b in page.locator(f"{holder} [data-cp-actions]").all():
+        bb = b.bounding_box()
+        assert head["x"] - 1 <= bb["x"] and bb["x"] + bb["width"] <= head["x"] + head["width"] + 1
+    for sel in ("[data-cp-edit]", ".cp-menu > summary", "[data-cp-manage]"):
+        assert "btn-secondary" in page.locator(sel).first.get_attribute("class"), sel
+    assert not page.evaluate("() => document.documentElement.scrollWidth > innerWidth")
+    page.screenshot(path=f"/tmp/opencode/fix_shots/local-providers-{theme}-1440.png")
+
+
+def test_tablet_scrolls_inside_table_without_page_overflow(table):
+    page, row, holder, *_ = table
+    page.set_viewport_size({"width": 768, "height": 1024})
+    page.wait_for_timeout(200)
+    assert not page.evaluate("() => document.documentElement.scrollWidth > innerWidth")
+    wrap = page.locator(f"{holder} .table-wrap")
+    assert wrap.evaluate("e => e.scrollWidth > e.clientWidth")
+
+

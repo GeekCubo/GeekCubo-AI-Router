@@ -1775,21 +1775,26 @@ kbd {
   .cp-model-bulk .cp-bulk-control, .cp-model-bulk .btn { width: 100%; max-width: none; }
 }
 .cp-model-disabled td:not(.th-actions) { opacity: .62; }
-.cp-models td.th-actions { white-space: nowrap; text-align: right; }
+.cp-models td.th-actions { white-space: nowrap; }
 
 /* ── compact model rows ── */
 .cp-models table td { padding: 5px 8px; }
 .cp-models table thead th { padding: 8px; line-height: 1.25; vertical-align: bottom; }
-.cp-models thead th.cp-cap-cell { white-space: normal; max-width: 64px; overflow-wrap: normal; word-break: keep-all; }
 .cp-models thead th { overflow: visible; text-overflow: clip; }
-.cp-models thead th.cp-num { white-space: normal; }
+/* Two-word headers wrap at word boundaries rather than squeezing data. */
+.cp-models thead th.cp-cap-cell, .cp-models thead th.cp-num { white-space: normal; overflow-wrap: normal; word-break: keep-all; }
 .cp-models .cp-col-check { padding-left: 10px; padding-right: 4px; }
-.cp-models .cp-num { white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
-.cp-models .cp-cap-cell { text-align: center; width: 1%; white-space: nowrap; }
-.cp-model-cell { max-width: 228px; }
+/* The model column takes a bounded share of the width instead of every
+   spare pixel; the rest goes to the data columns. */
+.cp-models th.cp-col-model { width: 22%; min-width: 170px; }
+.cp-models thead th.cp-num { min-width: 88px; }
+.cp-models .cp-num { white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; padding-left: 10px; padding-right: 10px; }
+.cp-models .cp-cap-cell { text-align: center; white-space: nowrap; padding-left: 8px; padding-right: 8px; min-width: 58px; }
+.cp-models .cp-col-actions, .cp-models td.th-actions { text-align: center; padding-left: 8px; padding-right: 8px; }
+.cp-model-cell { max-width: 300px; }
 .cp-model-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .cp-model-id {
-  display: block; min-width: 0; max-width: 188px;
+  display: block; min-width: 0; max-width: 200px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .cp-model-id:focus-visible, .cp-compact:focus-visible, .match-icon:focus-visible {
@@ -2976,12 +2981,13 @@ pre, .code-pre, .code-block { text-align: left; }
 .chat-model-select .gc-select-input { height: 28px; font-size: var(--fs-sm); flex-basis: 90px; }
 /* Reasoning effort: a compact native select beside the model picker. */
 .chat-head-actions .chat-reasoning-select {
-  width: auto; max-width: 170px; flex: 0 1 auto; height: 30px;
-  padding: 0 28px 0 8px; background-position: right 8px center;
-  font-size: var(--fs-sm); border-color: transparent; background-color: transparent;
+  width: auto; min-width: 150px; max-width: 190px; flex: 0 0 auto; height: 30px;
+  padding: 0 28px 0 10px; background-position: right 8px center;
+  font-size: var(--fs-sm); color: var(--ink); background-color: var(--surface);
+  border-color: var(--border-control);
   text-overflow: ellipsis;
 }
-.chat-head-actions .chat-reasoning-select:hover { border-color: var(--border); }
+.chat-head-actions .chat-reasoning-select:hover { border-color: var(--ink-3); }
 .chat-head-actions .chat-reasoning-select:disabled { opacity: 0.55; cursor: not-allowed; }
 .chat-thread {
   flex: 1;
@@ -3190,7 +3196,7 @@ pre, .code-pre, .code-block { text-align: left; }
 @media (max-width: 620px) {
   .chat-head-actions .btn { display: none; }
   .chat-head-actions .icon-btn { display: inline-flex; }
-  .chat-head-actions .chat-reasoning-select { max-width: 132px; }
+  .chat-head-actions .chat-reasoning-select { min-width: 0; max-width: 156px; flex: 0 1 auto; }
 }
 
 /* ─────────────── Quality: compact manual-score form ─────────────── */

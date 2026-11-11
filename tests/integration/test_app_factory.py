@@ -143,3 +143,23 @@ async def test_asset_version_is_a_content_hash(lite_app):
     # Every shell response carries the same token — it is not per-request.
     async with AsyncClient(transport=ASGITransport(app=lite_app), base_url="http://t") as c:
         assert token in (await c.get("/providers")).text
+
+
+async def test_versioned_bundles_are_cacheable_only_under_their_own_token(lite_app):
+    """A CDN keeps whatever it first sees under app.js?v=<token>. Only the
+    URL whose token matches the served bytes may be cached; a stale or
+    missing token must revalidate, so a release URL can never pin another
+    release's script (the a7a163c Cloudflare incident)."""
+    from httpx import ASGITransport, AsyncClient
+
+    async with AsyncClient(transport=ASGITransport(app=lite_app), base_url="http://t") as c:
+        html = (await c.get("/")).text
+        token = html.split("app.js?v=")[1].split('"')[0]
+        for asset in ("app.js", "style.css"):
+            current = await c.get(f"/static/{asset}?v={token}")
+            assert current.status_code == 200
+            assert current.headers["cache-control"] == "public, max-age=31536000, immutable"
+            for url in (f"/static/{asset}", f"/static/{asset}?v=0000000000000000"):
+                r = await c.get(url)
+                assert r.status_code == 200
+                assert r.headers["cache-control"] == "no-cache", url
