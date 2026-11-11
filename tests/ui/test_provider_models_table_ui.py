@@ -366,3 +366,20 @@ def test_tablet_scrolls_inside_table_without_page_overflow(table):
     assert wrap.evaluate("e => e.scrollWidth > e.clientWidth")
 
 
+
+
+
+@pytest.mark.parametrize("width", [1600, 2000])
+def test_price_headers_single_line_when_table_has_room(table, width):
+    """With room to spare the price headers stay on one line, and the table
+    still fits its card."""
+    page, row, holder, *_ = table
+    page.set_viewport_size({"width": width, "height": 1000})
+    page.wait_for_timeout(200)
+    info = page.evaluate(f"""() => {{ const w = document.querySelector('{holder} .table-wrap');
+      const ths = [...w.querySelectorAll('thead th.cp-num')].filter((th) => /1M/.test(th.innerText));
+      const lines = (th) => {{ const r = document.createRange(); r.selectNodeContents(th);
+        return new Set([...r.getClientRects()].map((b) => Math.round(b.top))).size; }};
+      return {{ lines: ths.map(lines), scroll: w.scrollWidth - w.clientWidth }}; }}""")
+    assert info["lines"] == [1, 1], info
+    assert info["scroll"] <= 1, info

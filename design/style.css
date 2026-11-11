@@ -1788,6 +1788,14 @@ kbd {
    spare pixel; the rest goes to the data columns. */
 .cp-models th.cp-col-model { width: 22%; min-width: 170px; }
 .cp-models thead th.cp-num { min-width: 88px; }
+/* The "in / out" unit sits under its header only when the table is short of
+   room; a wide table keeps every header on one line. */
+.cp-models { container-type: inline-size; }
+.cp-models .cp-th-unit { display: block; }
+@container (min-width: 1110px) {
+  .cp-models thead th.cp-num { white-space: nowrap; }
+  .cp-models .cp-th-unit { display: inline; }
+}
 .cp-models .cp-num { white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; padding-left: 10px; padding-right: 10px; }
 .cp-models .cp-cap-cell { text-align: center; white-space: nowrap; padding-left: 8px; padding-right: 8px; min-width: 58px; }
 .cp-models .cp-col-actions, .cp-models td.th-actions { text-align: center; padding-left: 8px; padding-right: 8px; }
