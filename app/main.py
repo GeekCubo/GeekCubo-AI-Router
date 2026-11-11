@@ -17,6 +17,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+# Bundles whose URLs carry the ?v= content token in index.html.
+_VERSIONED_ASSETS = ("app.js", "style.css")
+
 
 def _find_design_dir() -> str | None:
     """Locate the dashboard SPA. Three layouts have to work:
@@ -358,9 +361,33 @@ def create_app() -> FastAPI:
 
     design_dir = _find_design_dir()
     if design_dir:
-        app.mount("/static", StaticFiles(directory=design_dir), name="static")
-
         _asset_token_cache: dict[tuple[str, int, int], str] = {}
+
+        class _VersionedStaticFiles(StaticFiles):
+            """Explicit cache policy for the versioned bundles.
+
+            Without a Cache-Control header a CDN applies its own default TTL
+            and keeps whatever bytes it first saw under ``app.js?v=<token>``.
+            Only a response whose ``v`` matches the hash of the bytes being
+            served may be cached (immutably); any other request for a bundle
+            must revalidate, so a release URL can never pin another release's
+            script.
+            """
+
+            async def get_response(self, path, scope):
+                response = await super().get_response(path, scope)
+                if path in _VERSIONED_ASSETS and response.status_code in (200, 304):
+                    query = scope.get("query_string", b"").decode("latin-1")
+                    requested = dict(p.partition("=")[::2] for p in query.split("&") if p).get("v")
+                    current = _asset_version(os.path.join(design_dir, "index.html"))
+                    response.headers["Cache-Control"] = (
+                        "public, max-age=31536000, immutable"
+                        if requested == current
+                        else "no-cache"
+                    )
+                return response
+
+        app.mount("/static", _VersionedStaticFiles(directory=design_dir), name="static")
 
         def _asset_version(index_path: str) -> str:
             """Cache-busting token for index.html's asset URLs.
@@ -380,7 +407,7 @@ def create_app() -> FastAPI:
             import hashlib
 
             digest = hashlib.sha256()
-            for name in ("app.js", "style.css"):
+            for name in _VERSIONED_ASSETS:
                 candidate = os.path.join(os.path.dirname(index_path), name)
                 try:
                     st = os.stat(candidate)
@@ -394,7 +421,8 @@ def create_app() -> FastAPI:
                             token = hashlib.sha256(fh.read()).hexdigest()
                     except OSError:
                         continue
-                    _asset_token_cache.clear()
+                    for stale in [k for k in _asset_token_cache if k[0] == candidate]:
+                        del _asset_token_cache[stale]
                     _asset_token_cache[key] = token
                 digest.update(token.encode())
             return digest.hexdigest()[:16]

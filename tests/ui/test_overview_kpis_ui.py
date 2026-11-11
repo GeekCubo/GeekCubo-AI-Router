@@ -43,3 +43,45 @@ def test_overview_shows_requests_and_estimated_spend(browser, live_server, theme
     page.locator(".kpi-grid").screenshot(path=str(tmp_path / f"kpis-{theme}.png"))
     assert errors == []
     ctx.close()
+
+
+def test_overview_cards_render_from_analytics_and_stay_7d(browser, live_server):
+    """The cards fill as soon as /v1/analytics/spend answers (no waiting on
+    another loader), show "—" rather than $0 while loading, and keep the 7D
+    numbers when the Analytics range is 30 days."""
+    from tests.ui.conftest import sign_in
+
+    ctx = browser.new_context(viewport={"width": 1440, "height": 900})
+    page = ctx.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    seen: list[str] = []
+
+    def slow_spend(route):
+        seen.append(page.inner_text("#kpi-spend"))
+        route.continue_()
+
+    page.route("**/v1/analytics/spend?days=7", slow_spend)
+    sign_in(page, live_server.base_url)
+    page.wait_for_function("() => /\\d/.test(document.querySelector('#kpi-spend')?.textContent || '')",
+                           timeout=15_000)
+    assert seen and seen[0] == "$—", seen  # placeholder, never a premature $0
+    # Simulate a 30-day Analytics range: the Overview still shows 7-day data.
+    page.evaluate("""() => { state.windowDays = 30;
+      state.spend = { total_microcents: 999e8, by_model: [{ request_count: 999 }] }; renderOverview(); }""")
+    assert page.inner_text("#kpi-requests").strip() == "0"
+    assert errors == []
+    ctx.close()
+
+
+def test_unknown_i18n_key_keeps_markup_text(browser, live_server):
+    """A data-i18n key the loaded dictionary lacks must never surface raw."""
+    from tests.ui.conftest import sign_in
+
+    ctx = browser.new_context(viewport={"width": 1440, "height": 900})
+    page = ctx.new_page()
+    sign_in(page, live_server.base_url)
+    label = page.evaluate("""() => { const el = document.querySelector('[data-i18n="ov.requests"]');
+      el.dataset.i18n = 'ov.not_in_dictionary'; applyI18n(); return el.textContent; }""")
+    assert label == "Requests (7D)"
+    ctx.close()

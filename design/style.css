@@ -2976,12 +2976,13 @@ pre, .code-pre, .code-block { text-align: left; }
 .chat-model-select .gc-select-input { height: 28px; font-size: var(--fs-sm); flex-basis: 90px; }
 /* Reasoning effort: a compact native select beside the model picker. */
 .chat-head-actions .chat-reasoning-select {
-  width: auto; max-width: 170px; flex: 0 1 auto; height: 30px;
-  padding: 0 28px 0 8px; background-position: right 8px center;
-  font-size: var(--fs-sm); border-color: transparent; background-color: transparent;
+  width: auto; min-width: 150px; max-width: 190px; flex: 0 0 auto; height: 30px;
+  padding: 0 28px 0 10px; background-position: right 8px center;
+  font-size: var(--fs-sm); color: var(--ink); background-color: var(--surface);
+  border-color: var(--border-control);
   text-overflow: ellipsis;
 }
-.chat-head-actions .chat-reasoning-select:hover { border-color: var(--border); }
+.chat-head-actions .chat-reasoning-select:hover { border-color: var(--ink-3); }
 .chat-head-actions .chat-reasoning-select:disabled { opacity: 0.55; cursor: not-allowed; }
 .chat-thread {
   flex: 1;
@@ -3190,7 +3191,7 @@ pre, .code-pre, .code-block { text-align: left; }
 @media (max-width: 620px) {
   .chat-head-actions .btn { display: none; }
   .chat-head-actions .icon-btn { display: inline-flex; }
-  .chat-head-actions .chat-reasoning-select { max-width: 132px; }
+  .chat-head-actions .chat-reasoning-select { min-width: 0; max-width: 156px; flex: 0 1 auto; }
 }
 
 /* ─────────────── Quality: compact manual-score form ─────────────── */
