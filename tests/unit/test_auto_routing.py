@@ -251,6 +251,49 @@ def test_choose_model_preferred_models_falls_back_when_none_eligible():
     assert chosen == ["cheap"]
 
 
+def test_choose_model_preferred_outside_allowlist_does_not_empty_result():
+    """Regression: the soft `preferred_models` narrowing ran BEFORE the key's
+    allowlist, so a preferred model the key may not use narrowed the set to
+    that model alone, the allowlist then removed it, and Auto reported "no
+    allowed model" even though an allowed, capable model was deployable."""
+    from app.auto_routing import choose_auto_model
+    from packages.litellm_adapter.catalog import CatalogModel
+
+    candidates = [
+        CatalogModel("preferred", "openai", "openai/", True, False, False, 1e-6, 3e-6),
+        CatalogModel("allowed", "anthropic", "anthropic/", True, False, False, 1e-7, 4e-7),
+    ]
+    chosen, _scoring = choose_auto_model(
+        needs=set(),
+        deployable={"preferred", "allowed"},
+        candidates=candidates,
+        preferred_models=["preferred"],
+        allowlist=["allowed"],
+    )
+    assert chosen == ["allowed"]
+
+
+def test_choose_model_preferred_still_narrows_within_allowlist():
+    """The preference keeps working among the models the key may use."""
+    from app.auto_routing import choose_auto_model
+    from packages.litellm_adapter.catalog import CatalogModel
+
+    candidates = [
+        CatalogModel("cheap", "openai", "openai/", True, False, False, 1e-8, 1e-8),
+        CatalogModel("preferred", "openai", "openai/", True, False, False, 1e-6, 3e-6),
+        CatalogModel("blocked", "openai", "openai/", True, False, False, 1e-7, 1e-7),
+    ]
+    chosen, _scoring = choose_auto_model(
+        needs=set(),
+        deployable={"cheap", "preferred", "blocked"},
+        candidates=candidates,
+        strategy="cheapest",
+        preferred_models=["preferred", "blocked"],
+        allowlist=["cheap", "preferred"],
+    )
+    assert chosen == ["preferred"]
+
+
 # ── litellm strategy mapping ────────────────────────────────────────────
 
 def test_litellm_routing_strategy_maps_known_values():
