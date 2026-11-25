@@ -198,14 +198,30 @@ async def test_always_on_claude_does_not_claim_it_can_disable_thinking():
 
 
 async def test_magistral_is_unsupported_not_silently_ignored(upstream):
-    # LiteLLM accepts the effort and sends nothing for it (only a fixed
-    # system prompt) — so GeekCubo must refuse it rather than report it honoured.
-    params_low = await _send(upstream, "mistral/magistral-medium-latest", {"reasoning_effort": "low"})
-    params_high = await _send(upstream, "mistral/magistral-medium-latest", {"reasoning_effort": "high"})
-    assert "reasoning_effort" not in params_low and params_low == params_high
-    assert r.supported_levels("magistral-medium-latest", provider="mistral") == ()
-    with pytest.raises(r.ReasoningError):
-        r.provider_params(model_id="magistral-medium-latest", provider="mistral", effort="high")
+    # LiteLLM < 1.111 accepts the effort and sends nothing for it (only a
+    # fixed system prompt); 1.111+ forwards Mistral's `reasoning_effort`,
+    # which Magistral takes as none/high and LiteLLM maps every other level
+    # onto `high`. Either way GeekCubo may only advertise a level that
+    # reaches the wire as requested, and must refuse every other level
+    # rather than report it honoured or let it become another level.
+    wire = {}
+    for level in r.LEVELS:
+        body = await _send(upstream, "mistral/magistral-medium-latest", {"reasoning_effort": level})
+        wire[level] = body.get("reasoning_effort")
+    levels = r.supported_levels("magistral-medium-latest", provider="mistral")
+    assert levels == tuple(level for level in r.LEVELS if wire[level] == level)
+    for level in r.LEVELS:
+        if level in levels:
+            params = r.provider_params(
+                model_id="magistral-medium-latest", provider="mistral", effort=level,
+            )
+            assert params == {"reasoning_effort": level}
+            assert wire[level] == level
+        else:
+            with pytest.raises(r.ReasoningError):
+                r.provider_params(
+                    model_id="magistral-medium-latest", provider="mistral", effort=level,
+                )
 
 
 async def test_default_request_sends_no_reasoning_control(upstream):
