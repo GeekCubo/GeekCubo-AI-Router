@@ -406,11 +406,6 @@ def choose_auto_model(
         and reasoning_eligible(m, reasoning_effort)
         and is_priced_for_auto(m, allow_estimates=allow_estimates)
     ]
-    if preferred_models:
-        preferred_set = set(preferred_models)
-        narrowed = [m for m in eligible if m.id in preferred_set]
-        if narrowed:
-            eligible = narrowed
     if allowlist is not None:
         # Apply the key's allowlist before sorting + truncation. Without
         # this, an allowed model ranked beyond top_n would be dropped and
@@ -418,8 +413,16 @@ def choose_auto_model(
         # `is not None` (not truthiness): an explicit empty allowlist is
         # a "deny everything" signal from the operator; falsy check would
         # silently invert that into "no restriction" — a security hole.
+        # Also applied BEFORE the preferred-model narrowing: the preference
+        # is soft and must only choose among models this key may use, or a
+        # preferred-but-disallowed model would narrow the set to nothing.
         allow_set = set(allowlist)
         eligible = [m for m in eligible if m.id in allow_set]
+    if preferred_models:
+        preferred_set = set(preferred_models)
+        narrowed = [m for m in eligible if m.id in preferred_set]
+        if narrowed:
+            eligible = narrowed
     if not eligible:
         return [], {}
 

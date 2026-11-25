@@ -42,14 +42,14 @@ def _clean_state():
 
 def plan(catalog, *, needs=("tools",), strategy="balanced", policy=None,
          deployable=None, allowlist=None, evidence=None, body=None, hints=None,
-         quality=None):
+         quality=None, preferred=None):
     return plan_auto(
         body=body or {"messages": [{"role": "user", "content": "hi"}]},
         needs=set(needs),
         deployable=deployable if deployable is not None else {m.id for m in catalog},
         catalog=catalog,
         strategy=strategy,
-        preferred_models=[],
+        preferred_models=preferred or [],
         allowlist=allowlist,
         quality_scores=quality,
         tps_scores=None,
@@ -489,6 +489,16 @@ def test_empty_allowlist_matches_nothing():
     cat = [model("a")]
     with pytest.raises(AutoRoutingError):
         plan(cat, strategy="cheapest", allowlist=[])
+
+
+def test_preferred_model_outside_allowlist_does_not_block_allowed_models():
+    """A routing-level preferred model the key may not use must not hide the
+    key's allowed models: previously the plan raised (surfaced as a 403
+    "none in this key's allowlist") although `b` was allowed and capable."""
+    cat = [model("a", inc=1e-7, out=1e-7), model("b", inc=1e-5, out=1e-5)]
+    assert plan(
+        cat, strategy="cheapest", allowlist=["b"], preferred=["a"]
+    ).candidates == ["b"]
 
 
 def test_pool_membership_filters_deleted_models():
